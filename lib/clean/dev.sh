@@ -129,6 +129,26 @@ clean_corepack_cache() {
     fi
 }
 
+uv_process_state() {
+    mole_pgrep_any -x uv -x uvx
+}
+
+bun_process_state() {
+    mole_pgrep_any -x bun
+}
+
+# Direct cleanup of a cache whose owner command is unavailable. A running or
+# unknown owner keeps it; a guard stop is routine and does not end the step.
+_dev_safe_clean_owner_absent_cache() {
+    local probe="$1"
+    local family="$2"
+    shift 2
+    local rc=0
+    _dev_safe_clean_process_guarded "$probe" "$family" "${*: -1}" "$@" || rc=$?
+    [[ $rc -gt 1 ]] || return 0
+    return "$rc"
+}
+
 clean_uv_cache() {
     local uv_cache_path="$HOME/.cache/uv"
     if command -v uv > /dev/null 2>&1 && run_with_timeout "$MOLE_TIMEOUT_QUICK_DETECT_SEC" uv --version > /dev/null 2>&1; then
@@ -143,7 +163,9 @@ clean_uv_cache() {
         # until the owner timeout.
         UV_LOCK_TIMEOUT="$MOLE_TIMEOUT_SHORT_QUERY_SEC" clean_tool_cache "uv cache" "$uv_cache_path" run_with_timeout "$MOLE_TIMEOUT_PKG_CLEANUP_SEC" uv cache prune || return $?
     else
-        safe_clean "$uv_cache_path"/* "uv cache"
+        # An unresolvable uv is not proof the cache is orphaned: a uv outside
+        # Mole's PATH may still hold it, so only a confirmed idle owner clears it.
+        _dev_safe_clean_owner_absent_cache uv_process_state "uv" "$uv_cache_path"/* "uv cache"
     fi
 }
 
@@ -632,6 +654,13 @@ clean_dev_npm() {
             if [[ "$bun_cache_cleaned" == "true" ]]; then
                 echo -e "  ${GREEN}${ICON_SUCCESS}${NC} bun cache"
                 note_activity
+            else
+                # The owner failed or timed out: keep its cache rather than
+                # deleting it underneath a bun that may still be using it.
+                debug_log "bun cache: owner command exited $bun_rm_rc: bun pm cache rm"
+                if mole_rc_timeout "$bun_rm_rc"; then
+                    log_warning_to_file "bun cache timed out and was skipped: bun pm cache rm"
+                fi
             fi
         else
             echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} bun cache · would clean"
@@ -651,13 +680,8 @@ clean_dev_npm() {
         if [[ "$bun_cache_path_normalized" != "$bun_default_cache_normalized" ]]; then
             safe_clean "$bun_default_cache"/* "Orphaned bun cache"
         fi
-
-        # If bun pm cache rm fails, fall back to filesystem cleanup to avoid no-op.
-        if [[ "$bun_cache_cleaned" != "true" ]]; then
-            safe_clean "$bun_cache_path"/* "Bun cache"
-        fi
     else
-        safe_clean "$bun_default_cache"/* "Bun cache"
+        _dev_safe_clean_owner_absent_cache bun_process_state "bun" "$bun_default_cache"/* "Bun cache" || return $?
     fi
 
     note_activity

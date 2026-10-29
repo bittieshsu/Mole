@@ -1256,6 +1256,7 @@ note_activity() { :; }
 run_with_timeout() { shift; "$@"; }
 npm() { return 0; }
 bun() { return 1; }
+bun_process_state() { return 1; }
 export -f npm bun
 clean_dev_npm
 EOF
@@ -1372,8 +1373,12 @@ EOF
     [[ "$output" != *"Orphaned bun cache"* ]]
 }
 
-@test "clean_dev_npm falls back to filesystem cleanup when bun cache command fails" {
-    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+@test "clean_dev_npm keeps the bun cache when the bun cache command fails or times out" {
+    # The owner-command rule never falls back to direct deletion: a failed or
+    # timed-out `bun pm cache rm` keeps the cache it was asked to clear.
+    local rm_rc
+    for rm_rc in 1 124; do
+        run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" BUN_RM_RC="$rm_rc" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
@@ -1390,7 +1395,7 @@ bun() {
         return 0
     fi
     if [[ "$1" == "pm" && "$2" == "cache" && "${3:-}" == "rm" ]]; then
-        return 1
+        return "$BUN_RM_RC"
     fi
     if [[ "$1" == "pm" && "$2" == "cache" ]]; then
         echo "/tmp/mole-bun-cache"
@@ -1402,12 +1407,49 @@ export -f npm bun
 clean_dev_npm
 EOF
 
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"Bun cache|/tmp/mole-bun-cache/*"* ]] || return 1
-    [[ "$output" == *"Orphaned bun cache|$HOME/.bun/install/cache/*"* ]]
+        [ "$status" -eq 0 ] || { echo "rc=$rm_rc $output"; return 1; }
+        [[ "$output" != *"/tmp/mole-bun-cache/*"* ]] || { echo "rc=$rm_rc $output"; return 1; }
+        # The default root is no longer bun's, so it is still an orphan.
+        [[ "$output" == *"Orphaned bun cache|$HOME/.bun/install/cache/*"* ]] || { echo "rc=$rm_rc $output"; return 1; }
+    done
 }
 
-@test "clean_dev_npm stops on an interrupted bun cache removal instead of removing it directly" {
+@test "uv and bun caches without a usable owner are cleared only when no owner process runs" {
+    # An unresolvable uv or bun does not prove its cache is orphaned; a copy
+    # outside Mole's PATH may still be using it.
+    run env HOME="$BATS_TEST_TMPDIR/home" PROJECT_ROOT="$PROJECT_ROOT" PATH="/usr/bin:/bin" \
+        MOLE_TEST_NO_AUTH=1 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+mkdir -p "$HOME"
+source "$PROJECT_ROOT/bin/clean.sh"
+load_mole_whitelist "$HOME"
+clean_pnpm_stores() { :; }
+clean_corepack_cache() { :; }
+bun() { return 1; }
+DRY_RUN=false
+export DRY_RUN
+uv_process_state() { return "$OWNER_STATE"; }
+bun_process_state() { return "$OWNER_STATE"; }
+for OWNER_STATE in 0 1 2; do
+    mkdir -p "$HOME/.cache/uv/wheels-v5" "$HOME/.bun/install/cache/pkg"
+    printf 'w' > "$HOME/.cache/uv/wheels-v5/w.whl"
+    printf 'b' > "$HOME/.bun/install/cache/pkg/b.tgz"
+    out=$(clean_uv_cache 2>&1 && clean_dev_npm 2>&1) || { echo "RC:$OWNER_STATE:$?"; exit 1; }
+    uv_left=kept bun_left=kept
+    [[ -e "$HOME/.cache/uv/wheels-v5/w.whl" ]] || uv_left=removed
+    [[ -e "$HOME/.bun/install/cache/pkg/b.tgz" ]] || bun_left=removed
+    unknown=$(printf '%s\n' "$out" | grep -c 'stopped (process state unknown)' || true)
+    echo "STATE=$OWNER_STATE UV=$uv_left BUN=$bun_left UNKNOWN=$unknown"
+done
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"STATE=0 UV=kept BUN=kept UNKNOWN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"STATE=1 UV=removed BUN=removed UNKNOWN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"STATE=2 UV=kept BUN=kept UNKNOWN=2"* ]] || { echo "$output"; return 1; }
+}
+
+@test "clean_dev_npm never removes the bun cache directly after its owner command stops" {
     # Ctrl-C while `bun pm cache rm` holds the terminal reaches only the child.
     # A signal stops cleanup; a plain failure, a timeout or an errno-derived
     # status above 127 still falls back to the filesystem.
@@ -1454,9 +1496,9 @@ EOF
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [[ "$output" == *"BUN=130 RC=130 CANCEL=130 SOURCE=bun cache FALLBACK=0"* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"BUN=143 RC=143 CANCEL=143 SOURCE=bun cache FALLBACK=0"* ]] || { echo "$output"; return 1; }
-    [[ "$output" == *"BUN=1 RC=0 CANCEL=0 SOURCE= FALLBACK=1"* ]] || { echo "$output"; return 1; }
-    [[ "$output" == *"BUN=124 RC=0 CANCEL=0 SOURCE= FALLBACK=1"* ]] || { echo "$output"; return 1; }
-    [[ "$output" == *"BUN=243 RC=0 CANCEL=0 SOURCE= FALLBACK=1"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"BUN=1 RC=0 CANCEL=0 SOURCE= FALLBACK=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"BUN=124 RC=0 CANCEL=0 SOURCE= FALLBACK=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"BUN=243 RC=0 CANCEL=0 SOURCE= FALLBACK=0"* ]] || { echo "$output"; return 1; }
     rm -f "$HOME/bun-case.out" # SAFE: test scratch file under the temporary HOME
 }
 
