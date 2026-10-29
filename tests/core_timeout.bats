@@ -209,12 +209,14 @@ setup() {
 }
 
 @test "run_with_timeout: debug logging when MO_DEBUG=1" {
-    output=$(/bin/bash -c "
+    # On a terminal the notice is still printed; captured output is covered by
+    # "run_with_timeout keeps its debug notice out of captured command output".
+    output=$(script -q /dev/null /bin/bash -c "
         set -euo pipefail
         export MO_DEBUG=1
         source '$PROJECT_ROOT/lib/core/timeout.sh'
-        run_with_timeout 5 echo 'test' 2>&1
-    ")
+        run_with_timeout 5 echo 'test'
+    " < /dev/null)
     [[ "$output" =~ TIMEOUT ]]
 }
 
@@ -524,4 +526,37 @@ _tty_bg_field() {
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [[ "$output" == "0:no 1:no 124:no 127:no 128:no 129:yes 130:yes 143:yes 159:yes 160:no 192:no 243:no 255:no empty:no " ]]
+}
+
+@test "run_with_timeout keeps its debug notice out of captured command output" {
+    # Callers parse `$(run_with_timeout ... cmd 2>&1)`; under --debug the
+    # wrapper's own notice used to arrive inside that capture, and purge read
+    # it as an lsof warning.
+    mkdir -p "$HOME/fake-timeout"
+    cat > "$HOME/fake-timeout/timeout" <<'SCRIPT'
+#!/bin/bash
+shift 3
+exec "$@"
+SCRIPT
+    chmod +x "$HOME/fake-timeout/timeout"
+    run env HOME="$HOME" PROJECT_ROOT="${BATS_TEST_DIRNAME}/.." MO_DEBUG=1 FAKE_TIMEOUT="$HOME/fake-timeout/timeout" \
+        /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+for backend in binary perl shell; do
+    case "$backend" in
+        binary) MO_TIMEOUT_BIN="$FAKE_TIMEOUT" MO_TIMEOUT_PERL_BIN="" ;;
+        perl) MO_TIMEOUT_BIN="" MO_TIMEOUT_PERL_BIN="$(command -v perl)" ;;
+        shell) MO_TIMEOUT_BIN="" MO_TIMEOUT_PERL_BIN="" ;;
+    esac
+    : > "$DEBUG_LOG_FILE"
+    out=$(run_with_timeout 5 /bin/sh -c 'echo OUT; echo ERR >&2' 2>&1)
+    [[ "$out" == $'OUT\nERR' ]] || { printf 'CAPTURED:%s:%s\n' "$backend" "$out"; exit 1; }
+    grep -q '^\[TIMEOUT\] ' "$DEBUG_LOG_FILE" || { echo "NOT_LOGGED:$backend"; exit 1; }
+done
+echo CLEAN
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *CLEAN* ]] || { echo "$output"; return 1; }
 }

@@ -5263,6 +5263,34 @@ EOF
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
 
+@test "purge node project process check reads an idle project as idle under --debug" {
+    # The real run_with_timeout, so its debug notice reaches the lsof capture
+    # the way it does in `mo purge --debug`; the stubbed case above cannot see it.
+    mkdir -p "$HOME/fake-timeout" "$HOME/www/idle-project"
+    cat > "$HOME/fake-timeout/timeout" <<'SCRIPT'
+#!/bin/bash
+shift 3
+case "$1" in
+    /usr/sbin/lsof) printf 'p123\nfcwd\nn/unrelated\n' ;;
+    pgrep) exit 1 ;;
+    *) exec "$@" ;;
+esac
+SCRIPT
+    chmod +x "$HOME/fake-timeout/timeout"
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MO_DEBUG=1 FAKE_TIMEOUT="$HOME/fake-timeout/timeout" \
+        /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+MO_TIMEOUT_BIN="$FAKE_TIMEOUT"
+rc=0
+purge_node_project_running "$HOME/www/idle-project" 2> /dev/null || rc=$?
+echo "RC=$rc"
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"RC=1"* ]] || { echo "$output"; return 1; }
+}
+
 @test "purge final node owner after activity scan initial-running" {
     assert_purge_final_owner_guard initial-running
 }

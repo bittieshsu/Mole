@@ -158,6 +158,20 @@ mole_tty_is_foreground() {
 #   - No process group: Cannot guarantee cleanup of detached children
 #
 # For mission-critical timeouts, install coreutils.
+# A caller that captures `cmd 2>&1` and parses it (lsof, ps, codesign) must
+# not read this wrapper's own notice as command output: under --debug, purge
+# took the line for an lsof warning and kept every node_modules as unverified.
+# The notice reaches stderr only on a terminal and always lands in the debug log.
+_mole_timeout_debug() {
+    if [[ -t 2 ]]; then
+        echo "$1" >&2
+    fi
+    if [[ -n "${DEBUG_LOG_FILE:-}" ]] && declare -f append_log_line > /dev/null 2>&1; then
+        append_log_line "$DEBUG_LOG_FILE" "$1" || true
+    fi
+    return 0
+}
+
 run_with_timeout() {
     local duration="${1:-0}"
     shift || true
@@ -196,7 +210,7 @@ run_with_timeout() {
     fi
     if [[ -n "${timeout_bin:-}" ]]; then
         if [[ "${MO_DEBUG:-0}" == "1" ]]; then
-            echo "[TIMEOUT] Running with ${duration}s timeout: $*" >&2
+            _mole_timeout_debug "[TIMEOUT] Running with ${duration}s timeout: $*"
         fi
         local timeout_rc=0 timeout_started=$SECONDS timeout_kill_after=2
         local timeout_whole_seconds="${duration%.*}"
@@ -217,7 +231,7 @@ run_with_timeout() {
     # Use perl helper when timeout command is unavailable.
     if [[ -n "${MO_TIMEOUT_PERL_BIN:-}" ]]; then
         if [[ "${MO_DEBUG:-0}" == "1" ]]; then
-            echo "[TIMEOUT] Perl fallback, ${duration}s: $*" >&2
+            _mole_timeout_debug "[TIMEOUT] Perl fallback, ${duration}s: $*"
         fi
         # shellcheck disable=SC2016  # Embedded Perl uses Perl variables inside single quotes.
         "$MO_TIMEOUT_PERL_BIN" -e '
@@ -360,7 +374,7 @@ run_with_timeout() {
     # ========================================================================
 
     if [[ "${MO_DEBUG:-0}" == "1" ]]; then
-        echo "[TIMEOUT] Shell fallback, ${duration}s: $*" >&2
+        _mole_timeout_debug "[TIMEOUT] Shell fallback, ${duration}s: $*"
     fi
 
     # Start command in background
@@ -423,7 +437,7 @@ run_with_timeout() {
     if [[ $exit_code -eq 143 || $exit_code -eq 137 ]]; then
         # Command was killed by timeout
         if [[ "${MO_DEBUG:-0}" == "1" ]]; then
-            echo "[TIMEOUT] Command timed out after ${duration}s" >&2
+            _mole_timeout_debug "[TIMEOUT] Command timed out after ${duration}s"
         fi
         return 124
     fi
