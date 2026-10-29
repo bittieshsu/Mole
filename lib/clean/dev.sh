@@ -134,7 +134,8 @@ uv_process_state() {
 }
 
 bun_process_state() {
-    mole_pgrep_any -x bun
+    # bunx is a link to bun, and a process keeps the name it was started by.
+    mole_pgrep_any -x bun -x bunx
 }
 
 # Direct cleanup of a cache whose owner command is unavailable. A running or
@@ -558,6 +559,53 @@ clean_pnpm_stores() {
 }
 
 # npm/pnpm/yarn/bun caches.
+# Rebind the owner check at the command boundary, after root validation.
+_bun_pm_cache_rm() {
+    local _MOLE_CLEAN_GUARD_REASON=""
+    mole_clean_process_guard bun_process_state "bun started" || return 1
+    run_with_timeout "$MOLE_TIMEOUT_PKG_LIST_SEC" bun pm cache rm
+}
+
+clean_bun_cache() {
+    local bun_default_cache="$HOME/.bun/install/cache"
+    if ! command -v bun > /dev/null 2>&1 || ! run_with_timeout "$MOLE_TIMEOUT_QUICK_DETECT_SEC" bun --version > /dev/null 2>&1; then
+        _dev_safe_clean_owner_absent_cache bun_process_state "bun" "$bun_default_cache"/* "Bun cache"
+        return $?
+    fi
+
+    local bun_cache_path="" cache_rc=0
+    if [[ -t 1 ]]; then start_section_spinner "Checking bun cache path..."; fi
+    bun_cache_path=$(run_with_timeout "$MOLE_TIMEOUT_QUICK_DETECT_SEC" bun pm cache 2> /dev/null) || cache_rc=$?
+    if [[ -t 1 ]]; then stop_section_spinner; fi
+    mole_rc_signal "$cache_rc" && return "$cache_rc"
+    # `bun pm cache rm` clears bun's configured root. A failed lookup is not
+    # permission to check the default path and let bun clear a different one.
+    [[ $cache_rc -eq 0 && "$bun_cache_path" == /* && "$bun_cache_path" != *$'\n'* ]] || return 0
+    bun_cache_path="${bun_cache_path%/}"
+
+    local _MOLE_CLEAN_GUARD_REASON=""
+    if ! is_path_whitelisted "$bun_cache_path" &&
+        ! mole_clean_process_guard bun_process_state "bun started"; then
+        mole_report_guard_stop "bun cache" mole_defer_cleanup_family "bun"
+    else
+        clean_tool_cache "bun cache" "$bun_cache_path" _bun_pm_cache_rm || return $?
+    fi
+
+    local bun_cache_physical="$bun_cache_path" bun_default_physical="$bun_default_cache"
+    if [[ -d "$bun_cache_physical" ]]; then
+        bun_cache_physical=$(cd "$bun_cache_physical" 2> /dev/null && pwd -P) || bun_cache_physical="$bun_cache_path"
+    fi
+    if [[ -d "$bun_default_physical" ]]; then
+        bun_default_physical=$(cd "$bun_default_physical" 2> /dev/null && pwd -P) || bun_default_physical="$bun_default_cache"
+    fi
+    if [[ "$bun_cache_physical" != "$bun_default_physical" ]]; then
+        # Another bun environment may still use the default root.
+        _dev_safe_clean_owner_absent_cache bun_process_state "bun" "$bun_default_cache"/* "Orphaned bun cache"
+        return $?
+    fi
+    return 0
+}
+
 clean_dev_npm() {
     local npm_default_cache="$HOME/.npm"
     local npm_cache_path="$npm_default_cache"
@@ -610,79 +658,7 @@ clean_dev_npm() {
     # the generic ~/Library/Caches sweep; name the rebuildable metadata here.
     safe_clean "$HOME/Library/Caches/pnpm"/metadata*/* "pnpm metadata cache"
     clean_corepack_cache || return $?
-    local bun_default_cache="$HOME/.bun/install/cache"
-    local bun_cache_path="$bun_default_cache"
-    local bun_cache_cleaned=false
-    local bun_dry_run="${DRY_RUN:-false}"
-    if command -v bun > /dev/null 2>&1 && run_with_timeout "$MOLE_TIMEOUT_QUICK_DETECT_SEC" bun --version > /dev/null 2>&1; then
-        if [[ -t 1 ]]; then start_section_spinner "Checking bun cache path..."; fi
-        bun_cache_path=$(run_with_timeout "$MOLE_TIMEOUT_QUICK_DETECT_SEC" bun pm cache 2> /dev/null) || bun_cache_path=""
-        if [[ -t 1 ]]; then stop_section_spinner; fi
-
-        if [[ -z "$bun_cache_path" || "$bun_cache_path" != /* ]]; then
-            bun_cache_path="$bun_default_cache"
-        fi
-
-        local bun_protected=false
-        is_path_whitelisted "$bun_cache_path" && bun_protected=true
-
-        if [[ "$bun_protected" == "true" ]]; then
-            if [[ "$bun_dry_run" == "true" ]]; then
-                echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} bun cache · would skip (whitelist)"
-            else
-                echo -e "  ${GREEN}${ICON_SUCCESS}${NC} bun cache · skipped (whitelist)"
-                note_activity
-            fi
-            bun_cache_cleaned=true
-        elif [[ "$bun_dry_run" != "true" ]]; then
-            if [[ -t 1 ]]; then
-                start_section_spinner "Cleaning bun cache..."
-            fi
-            local bun_rm_rc=0
-            run_with_timeout "$MOLE_TIMEOUT_PKG_LIST_SEC" bun pm cache rm > /dev/null 2>&1 || bun_rm_rc=$?
-            [[ $bun_rm_rc -ne 0 ]] || bun_cache_cleaned=true
-            if [[ -t 1 ]]; then
-                stop_section_spinner
-            fi
-            if mole_rc_signal "$bun_rm_rc"; then
-                # Ctrl-C while the owner command holds the terminal reaches
-                # only the child: stop instead of removing the cache directly.
-                debug_log "bun cache: owner command interrupted (exit $bun_rm_rc)"
-                _mole_record_clean_cancellation "$bun_rm_rc" "bun cache"
-                return "$bun_rm_rc"
-            fi
-            if [[ "$bun_cache_cleaned" == "true" ]]; then
-                echo -e "  ${GREEN}${ICON_SUCCESS}${NC} bun cache"
-                note_activity
-            else
-                # The owner failed or timed out: keep its cache rather than
-                # deleting it underneath a bun that may still be using it.
-                debug_log "bun cache: owner command exited $bun_rm_rc: bun pm cache rm"
-                if mole_rc_timeout "$bun_rm_rc"; then
-                    log_warning_to_file "bun cache timed out and was skipped: bun pm cache rm"
-                fi
-            fi
-        else
-            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} bun cache · would clean"
-            note_activity
-            bun_cache_cleaned=true
-        fi
-
-        local bun_cache_path_normalized="${bun_cache_path%/}"
-        local bun_default_cache_normalized="${bun_default_cache%/}"
-        if [[ -d "$bun_cache_path_normalized" ]]; then
-            bun_cache_path_normalized=$(cd "$bun_cache_path_normalized" 2> /dev/null && pwd -P) || bun_cache_path_normalized="${bun_cache_path%/}"
-        fi
-        if [[ -d "$bun_default_cache_normalized" ]]; then
-            bun_default_cache_normalized=$(cd "$bun_default_cache_normalized" 2> /dev/null && pwd -P) || bun_default_cache_normalized="${bun_default_cache%/}"
-        fi
-
-        if [[ "$bun_cache_path_normalized" != "$bun_default_cache_normalized" ]]; then
-            safe_clean "$bun_default_cache"/* "Orphaned bun cache"
-        fi
-    else
-        _dev_safe_clean_owner_absent_cache bun_process_state "bun" "$bun_default_cache"/* "Bun cache" || return $?
-    fi
+    clean_bun_cache || return $?
 
     note_activity
     safe_clean ~/.tnpm/_cacache/* "tnpm cache directory"

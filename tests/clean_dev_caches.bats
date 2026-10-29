@@ -1274,7 +1274,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
 start_section_spinner() { :; }
 stop_section_spinner() { :; }
-clean_tool_cache() { :; }
+clean_tool_cache() { echo "$1|$*"; }
+bun_process_state() { return 1; }
 safe_clean() { echo "$2|$1"; }
 note_activity() { :; }
 run_with_timeout() { shift; "$@"; }
@@ -1298,7 +1299,7 @@ clean_dev_npm
 EOF
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"bun cache"* ]] || return 1
+    [[ "$output" == *"bun cache|bun cache "*" _bun_pm_cache_rm"* ]] || return 1
     [[ "$output" != *"Bun cache|$HOME/.bun/install/cache/*"* ]] || return 1
     [[ "$output" != *"Orphaned bun cache"* ]]
 }
@@ -1310,7 +1311,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
 start_section_spinner() { :; }
 stop_section_spinner() { :; }
-clean_tool_cache() { :; }
+clean_tool_cache() { echo "$1|$*"; }
+bun_process_state() { return 1; }
 safe_clean() { echo "$2|$1"; }
 note_activity() { :; }
 run_with_timeout() { shift; "$@"; }
@@ -1334,7 +1336,7 @@ clean_dev_npm
 EOF
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"bun cache"* ]] || return 1
+    [[ "$output" == *"bun cache|bun cache "*" _bun_pm_cache_rm"* ]] || return 1
     [[ "$output" == *"Orphaned bun cache|$HOME/.bun/install/cache/*"* ]]
 }
 
@@ -1345,7 +1347,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
 start_section_spinner() { :; }
 stop_section_spinner() { :; }
-clean_tool_cache() { :; }
+clean_tool_cache() { echo "$1|$*"; }
+bun_process_state() { return 1; }
 safe_clean() { echo "$2|$1"; }
 note_activity() { :; }
 run_with_timeout() { shift; "$@"; }
@@ -1369,7 +1372,7 @@ clean_dev_npm
 EOF
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"bun cache"* ]] || return 1
+    [[ "$output" == *"bun cache|bun cache "*" _bun_pm_cache_rm"* ]] || return 1
     [[ "$output" != *"Orphaned bun cache"* ]]
 }
 
@@ -1384,7 +1387,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
 start_section_spinner() { :; }
 stop_section_spinner() { :; }
-clean_tool_cache() { :; }
+bun_process_state() { return 1; }
+debug_log() { :; }
 safe_clean() { echo "$2|$1"; }
 note_activity() { :; }
 run_with_timeout() { shift; "$@"; }
@@ -1398,20 +1402,92 @@ bun() {
         return "$BUN_RM_RC"
     fi
     if [[ "$1" == "pm" && "$2" == "cache" ]]; then
-        echo "/tmp/mole-bun-cache"
+        echo "$HOME/custom-bun-cache"
         return 0
     fi
     return 0
 }
 export -f npm bun
+mkdir -p "$HOME/custom-bun-cache"
+mkdir -p "$(dirname "$LOG_FILE")"
+: > "$LOG_FILE"
 clean_dev_npm
+echo "RM_RC=$BUN_RM_RC"
+grep -c 'bun cache timed out and was skipped' "$LOG_FILE" | sed 's/^/TIMEOUT_LOGGED=/' || true
 EOF
 
         [ "$status" -eq 0 ] || { echo "rc=$rm_rc $output"; return 1; }
-        [[ "$output" != *"/tmp/mole-bun-cache/*"* ]] || { echo "rc=$rm_rc $output"; return 1; }
+        [[ "$output" == *"RM_RC=$rm_rc"* ]] || { echo "rc=$rm_rc $output"; return 1; }
+        [[ "$output" != *"custom-bun-cache/*"* ]] || { echo "rc=$rm_rc $output"; return 1; }
+        local logged=0
+        [[ $rm_rc -eq 124 ]] && logged=1
+        [[ "$output" == *"TIMEOUT_LOGGED=$logged"* ]] || { echo "rc=$rm_rc $output"; return 1; }
         # The default root is no longer bun's, so it is still an orphan.
         [[ "$output" == *"Orphaned bun cache|$HOME/.bun/install/cache/*"* ]] || { echo "rc=$rm_rc $output"; return 1; }
     done
+}
+
+@test "bun owner cleanup requires a confirmed cache root and an idle bun" {
+    # `bun pm cache rm` clears bun's configured root, so a guessed default or a
+    # running bun or bunx keeps the owner command from starting; the default
+    # root left behind by a custom configuration waits for an idle bun too.
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+clean_pnpm_stores() { :; }
+clean_corepack_cache() { :; }
+debug_log() { :; }
+note_activity() { :; }
+safe_clean() { echo "SAFE_CLEAN:$2"; }
+mole_defer_cleanup_family() { echo "DEFER:$1"; }
+run_with_timeout() { shift; "$@"; }
+npm() { return 0; }
+bun_process_state() { return "$OWNER_STATE"; }
+bun() {
+    case "$*" in
+        --version) echo "1.2.0" ;;
+        'pm cache rm') echo BUN_RM >> "$HOME/bun-rm.trace" ;;
+        'pm cache')
+            [[ "$QUERY" == fail ]] && return 1
+            printf '%s\n' "$QUERY"
+            ;;
+    esac
+}
+mkdir -p "$HOME/custom-bun-cache" "$HOME/.bun/install/cache/pkg"
+export DRY_RUN=false
+for case_spec in "fail 1" "relative/cache 1" "$HOME/custom-bun-cache 0" "$HOME/custom-bun-cache 2" "$HOME/custom-bun-cache 1"; do
+    QUERY="${case_spec% *}"
+    OWNER_STATE="${case_spec##* }"
+    : > "$HOME/bun-rm.trace"
+    out=$(clean_bun_cache 2>&1) || { echo "RC:$case_spec:$?"; exit 1; }
+    rm_runs=$(grep -c '^BUN_RM$' "$HOME/bun-rm.trace" || true)
+    orphan=$(printf '%s\n' "$out" | grep -c '^SAFE_CLEAN:Orphaned bun cache$' || true)
+    echo "CASE=${QUERY##*/}:$OWNER_STATE RM=$rm_runs ORPHAN=$orphan"
+done
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=fail:1 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=cache:1 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=custom-bun-cache:0 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=custom-bun-cache:2 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=custom-bun-cache:1 RM=1 ORPHAN=1"* ]] || { echo "$output"; return 1; }
+}
+
+@test "bun process probe also sees bunx" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+mole_pgrep_any() { echo "PROBE:$*"; return 1; }
+bun_process_state || true
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"PROBE:-x bun -x bunx"* ]] || { echo "$output"; return 1; }
 }
 
 @test "uv and bun caches without a usable owner are cleared only when no owner process runs" {
@@ -1452,7 +1528,7 @@ EOF
 @test "clean_dev_npm never removes the bun cache directly after its owner command stops" {
     # Ctrl-C while `bun pm cache rm` holds the terminal reaches only the child.
     # A signal stops cleanup; a plain failure, a timeout or an errno-derived
-    # status above 127 still falls back to the filesystem.
+    # status above 127 skips bun without removing its cache directly.
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_CURRENT_COMMAND=clean \
         /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
@@ -1462,7 +1538,7 @@ start_section_spinner() { :; }
 stop_section_spinner() { :; }
 clean_pnpm_stores() { :; }
 clean_corepack_cache() { :; }
-clean_tool_cache() { :; }
+bun_process_state() { return 1; }
 safe_clean() { echo "SAFE_CLEAN:$2"; }
 note_activity() { :; }
 debug_log() { :; }
@@ -1477,11 +1553,12 @@ bun() {
         return "$BUN_RM_RC"
     fi
     if [[ "$1" == "pm" && "$2" == "cache" ]]; then
-        echo "/tmp/mole-bun-cache"
+        echo "$HOME/custom-bun-cache"
         return 0
     fi
     return 0
 }
+mkdir -p "$HOME/custom-bun-cache"
 for BUN_RM_RC in 130 143 1 124 243; do
     MOLE_CLEAN_CANCEL_STATUS=0
     MOLE_CLEAN_CANCEL_SOURCE=""
