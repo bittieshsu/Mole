@@ -1413,7 +1413,7 @@ mkdir -p "$(dirname "$LOG_FILE")"
 : > "$LOG_FILE"
 clean_dev_npm
 echo "RM_RC=$BUN_RM_RC"
-grep -c 'bun cache timed out and was skipped' "$LOG_FILE" | sed 's/^/TIMEOUT_LOGGED=/' || true
+grep -c 'bun cache timed out and was skipped: .*bun pm cache rm$' "$LOG_FILE" | sed 's/^/TIMEOUT_LOGGED=/' || true
 EOF
 
         [ "$status" -eq 0 ] || { echo "rc=$rm_rc $output"; return 1; }
@@ -1445,7 +1445,17 @@ safe_clean() { echo "SAFE_CLEAN:$2"; }
 mole_defer_cleanup_family() { echo "DEFER:$1"; }
 run_with_timeout() { shift; "$@"; }
 npm() { return 0; }
-bun_process_state() { return "$OWNER_STATE"; }
+bun_process_state() {
+    # "1then0" reads idle at the pre-check and running at the command.
+    if [[ "$OWNER_STATE" == 1then0 ]]; then
+        local calls
+        calls=$(($(cat "$HOME/bun-probe.count") + 1))
+        echo "$calls" > "$HOME/bun-probe.count"
+        [[ $calls -eq 1 ]] && return 1
+        return 0
+    fi
+    return "$OWNER_STATE"
+}
 bun() {
     case "$*" in
         --version) echo "1.2.0" ;;
@@ -1458,21 +1468,25 @@ bun() {
 }
 mkdir -p "$HOME/custom-bun-cache" "$HOME/.bun/install/cache/pkg"
 export DRY_RUN=false
-for case_spec in "fail 1" "relative/cache 1" "$HOME/custom-bun-cache 0" "$HOME/custom-bun-cache 2" "$HOME/custom-bun-cache 1"; do
+for case_spec in "fail 1" "relative/cache 1" "/ 1" "$HOME/custom-bun-cache 0" "$HOME/custom-bun-cache 2" "$HOME/custom-bun-cache 1then0" "$HOME/custom-bun-cache 1"; do
     QUERY="${case_spec% *}"
     OWNER_STATE="${case_spec##* }"
     : > "$HOME/bun-rm.trace"
+    echo 0 > "$HOME/bun-probe.count"
     out=$(clean_bun_cache 2>&1) || { echo "RC:$case_spec:$?"; exit 1; }
     rm_runs=$(grep -c '^BUN_RM$' "$HOME/bun-rm.trace" || true)
     orphan=$(printf '%s\n' "$out" | grep -c '^SAFE_CLEAN:Orphaned bun cache$' || true)
-    echo "CASE=${QUERY##*/}:$OWNER_STATE RM=$rm_runs ORPHAN=$orphan"
+    label="${QUERY##*/}"
+    echo "CASE=${label:-root}:$OWNER_STATE RM=$rm_runs ORPHAN=$orphan"
 done
 EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [[ "$output" == *"CASE=fail:1 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"CASE=cache:1 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=root:1 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"CASE=custom-bun-cache:0 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"CASE=custom-bun-cache:1then0 RM=0 "* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"CASE=custom-bun-cache:2 RM=0 ORPHAN=0"* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"CASE=custom-bun-cache:1 RM=1 ORPHAN=1"* ]] || { echo "$output"; return 1; }
 }

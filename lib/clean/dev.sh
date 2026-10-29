@@ -563,7 +563,7 @@ clean_pnpm_stores() {
 _bun_pm_cache_rm() {
     local _MOLE_CLEAN_GUARD_REASON=""
     mole_clean_process_guard bun_process_state "bun started" || return 1
-    run_with_timeout "$MOLE_TIMEOUT_PKG_LIST_SEC" bun pm cache rm
+    "$@"
 }
 
 clean_bun_cache() {
@@ -582,13 +582,16 @@ clean_bun_cache() {
     # permission to check the default path and let bun clear a different one.
     [[ $cache_rc -eq 0 && "$bun_cache_path" == /* && "$bun_cache_path" != *$'\n'* ]] || return 0
     bun_cache_path="${bun_cache_path%/}"
+    # "/" strips to empty, and clean_tool_cache skips root policy for an empty path.
+    [[ -n "$bun_cache_path" ]] || return 0
 
     local _MOLE_CLEAN_GUARD_REASON=""
     if ! is_path_whitelisted "$bun_cache_path" &&
         ! mole_clean_process_guard bun_process_state "bun started"; then
         mole_report_guard_stop "bun cache" mole_defer_cleanup_family "bun"
     else
-        clean_tool_cache "bun cache" "$bun_cache_path" _bun_pm_cache_rm || return $?
+        clean_tool_cache "bun cache" "$bun_cache_path" \
+            _bun_pm_cache_rm run_with_timeout "$MOLE_TIMEOUT_PKG_LIST_SEC" bun pm cache rm || return $?
     fi
 
     local bun_cache_physical="$bun_cache_path" bun_default_physical="$bun_default_cache"
