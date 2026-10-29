@@ -31,6 +31,13 @@ Source follow-up verified before push on 2026-10-25: `9c33da94` repeats named/sh
 
 Implemented in source (Mole CLI (macOS), frozen at `d438a87c` on `main`): `clean_xcode_tools` now also removes, by whole directory, a shut-down simulator's MobileAsset downloads, unified-log stores, `Library/Caches` and the lock-screen poster store, matching Mole Mac's existing per-device cleanup. Before this, the CLI took only `data/tmp` inside a device, so a Mac holding 26 idle simulators kept tens of gigabytes Mole Mac would list. A leaf is listed only when non-empty, on a device whose `device.plist` reads shut down, with no link between the device folder and the leaf; the whole batch still waits while any simulator tool or booted device is active, and each leaf rereads its device before removal. Old-source runs of the two new tests fail; local check and test receipts are in the commit. Mole CLI (Windows) and Mole for Windows: Not applicable (no iOS simulators). Not released: the next CLI release delivers it.
 
+## 2026-10-29 JavaScript and Python tool caches
+
+Implemented in source (Mole CLI (macOS), `main`): `clean_dev_npm` keeps `~/.npm/_npx` in the default and custom npm caches because running npx commands load packages from it (#1870, `f954e2fd`); `~/Library/Caches/pnpm/dlx*` is hard-safety whitelisted while pnpm metadata is still cleaned by name (`c32c7274`); a failed or timed-out `bun pm cache rm` keeps the cache, and when uv or bun itself is unusable its default cache is removed directly only after a process probe confirms no `uv`/`uvx` or `bun` runs (`cf2482c5`). Old-source runs of the new tests fail; local receipts are in the commits. Not released: the next CLI release delivers it.
+
+- Mole Mac: it already guards running npx packages at its own sink; the private app-owned record owns the detailed comparison.
+- Mole CLI (Windows): npx, pnpm dlx and uv are Not applicable, because `lib/clean/dev.ps1:Clear-NpmCache` only runs `npm cache clean --force` (which leaves `_npx`) and `pnpm store prune`, and there is no uv cleanup. Bun is Pending: `Clear-NpmCache` empties `~\.bun\install\cache` directly with no owner command or process check. Next check: the Windows branch record adds a CLI-SYNC row and decides between an owner command and a bun process guard.
+
 ## Current disposition
 
 | Topic | Status | Source and next check |
