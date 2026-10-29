@@ -167,7 +167,9 @@ _mole_timeout_debug() {
         echo "$1" >&2
     fi
     if [[ -n "${DEBUG_LOG_FILE:-}" ]] && declare -f append_log_line > /dev/null 2>&1; then
-        append_log_line "$DEBUG_LOG_FILE" "$1" || true
+        # An unwritable log reports through the caller's stderr before the
+        # inner `2> /dev/null` applies, which is the capture this avoids.
+        { append_log_line "$DEBUG_LOG_FILE" "$1"; } 2> /dev/null || true
     fi
     return 0
 }

@@ -217,7 +217,8 @@ setup() {
         source '$PROJECT_ROOT/lib/core/timeout.sh'
         run_with_timeout 5 echo 'test'
     " < /dev/null)
-    [[ "$output" =~ TIMEOUT ]]
+    # The per-call notice, not the one-time backend line printed at source.
+    [[ "$output" =~ \[TIMEOUT\]\ (Running\ with\ 5s\ timeout|Perl\ fallback,\ 5s|Shell\ fallback,\ 5s):\ echo\ test ]] || return 1
 }
 
 @test "run_with_timeout: no debug logging when MO_DEBUG=0" {
@@ -553,6 +554,11 @@ for backend in binary perl shell; do
     out=$(run_with_timeout 5 /bin/sh -c 'echo OUT; echo ERR >&2' 2>&1)
     [[ "$out" == $'OUT\nERR' ]] || { printf 'CAPTURED:%s:%s\n' "$backend" "$out"; exit 1; }
     grep -q '^\[TIMEOUT\] ' "$DEBUG_LOG_FILE" || { echo "NOT_LOGGED:$backend"; exit 1; }
+    # An unwritable debug log must not put its write error in the capture.
+    chmod 444 "$DEBUG_LOG_FILE"
+    out=$(run_with_timeout 5 /bin/sh -c 'echo OUT' 2>&1)
+    chmod 644 "$DEBUG_LOG_FILE"
+    [[ "$out" == OUT ]] || { printf 'UNWRITABLE:%s:%s\n' "$backend" "$out"; exit 1; }
 done
 echo CLEAN
 EOF
