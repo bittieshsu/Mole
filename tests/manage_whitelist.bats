@@ -316,6 +316,29 @@ EOF
     [[ "$output" != *"\$HOME/go/pkg/mod"* ]]
 }
 
+@test "whitelist inventory lists the Bun cache clean_bun_cache removes" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/manage/whitelist.sh"
+get_all_cache_items
+EOF
+
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"Bun package cache|\$HOME/.bun/install/cache/*|package_manager"* ]]
+}
+
+@test "a whitelisted Bun cache entry protects the cache root bun pm cache rm would clear" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+WHITELIST_PATTERNS=("$HOME/.bun/install/cache/*")
+is_path_whitelisted "$HOME/.bun/install/cache"
+is_path_whitelisted "$HOME/.bun/install/cache/some-package@1.0.0"
+EOF
+
+    [ "$status" -eq 0 ]
+}
+
 @test "whitelist inventory exposes guarded PyInstaller and Clang caches" {
     local darwin_cache="$HOME/darwin-cache"
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" DARWIN_CACHE="$darwin_cache" \
