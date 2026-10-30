@@ -76,20 +76,45 @@ _SIMULATOR_DEVICE_LEAVES=(
 _simulator_device_is_shut_down() {
     local plist="$1/device.plist"
     [[ -f "$plist" ]] || return 1
-    local snapshot="" state="" deleted="" probe_rc=0
+    local snapshot="" probe_rc=0
     # Read once: an absent optional key in a valid snapshot is different from
     # an unreadable or disappearing device.plist.
     snapshot=$(run_with_timeout 2 /usr/bin/plutil -convert xml1 -o - "$plist" 2> /dev/null) || probe_rc=$?
     mole_rc_signal "$probe_rc" && return "$probe_rc"
     [[ $probe_rc -eq 0 ]] || return 1
-    state=$(run_with_timeout 2 /usr/bin/plutil -extract state raw -o - - <<< "$snapshot" 2> /dev/null) || probe_rc=$?
+    # A failed plutil query does not establish optional-key absence.
+    # Judge types and optional-key absence from the successful XML snapshot,
+    # using the same root-dict depth contract as obsolete-extension metadata.
+    # shellcheck disable=SC2016 # Field references belong to awk, not Bash.
+    run_with_timeout 2 /usr/bin/awk '
+        {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (line == "<dict>" || line == "<array>") {
+                if (depth == 0) root_dict = (line == "<dict>")
+                if (depth == 1 && (pending == "state" || pending == "isDeleted")) invalid = 1
+                depth++; pending = ""; next
+            }
+            if (line == "</dict>" || line == "</array>") { depth--; pending = ""; next }
+            if (depth == 1 && line ~ /^<key>.*<\/key>$/) {
+                pending = substr(line, 6, length(line) - 11)
+                next
+            }
+            if (depth == 1 && pending == "state") {
+                state_count++
+                if (line != "<integer>1</integer>") invalid = 1
+            }
+            if (depth == 1 && pending == "isDeleted") {
+                deleted_count++
+                if (line != "<false/>") invalid = 1
+            }
+            pending = ""
+        }
+        END { exit !(root_dict && depth == 0 && state_count == 1 && deleted_count <= 1 && !invalid) }
+    ' <<< "$snapshot" 2> /dev/null || probe_rc=$?
     mole_rc_signal "$probe_rc" && return "$probe_rc"
-    [[ $probe_rc -eq 0 && "$state" == "1" ]] || return 1
-    deleted=$(run_with_timeout 2 /usr/bin/plutil -extract isDeleted raw -o - - <<< "$snapshot" 2> /dev/null) || probe_rc=$?
-    mole_rc_signal "$probe_rc" && return "$probe_rc"
-    mole_rc_timeout "$probe_rc" && return 1
-    # plutil returns 1 for a missing optional key in the validated snapshot.
-    [[ $probe_rc -eq 1 && -z "$deleted" ]] || [[ $probe_rc -eq 0 && "$deleted" == "false" ]]
+    [[ $probe_rc -eq 0 ]]
 }
 
 # A leaf qualifies only at its listed place under the Devices root, with no

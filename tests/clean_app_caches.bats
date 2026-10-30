@@ -3555,9 +3555,9 @@ SCRIPT
 }
 
 @test "simulator device metadata timeouts retain the device and signals stop later devices" {
-    for field in snapshot state isDeleted; do
+    for field in snapshot metadata; do
         for phase in discovery sink; do
-            for probe_rc in 124 130 143; do
+            for probe_rc in 1 124 130 143; do
                 run env HOME="$HOME/metadata-$field-$phase-$probe_rc" PROJECT_ROOT="$PROJECT_ROOT" \
                     PATH="/usr/bin:/bin" MOLE_TEST_NO_AUTH=1 FIELD="$field" PHASE="$phase" PROBE_RC="$probe_rc" \
                     /bin/bash --noprofile --norc <<'EOF'
@@ -3570,7 +3570,7 @@ at_sink=false
 _simulator_app_cache_delete_guard_allows() { at_sink=true; return 0; }
 eval "$(declare -f run_with_timeout | sed '1s/run_with_timeout/original_run_with_timeout/')"
 run_with_timeout() {
-    if { [[ "$*" == *"-extract $FIELD "* ]] || [[ "$FIELD" == snapshot && "$*" == *"-convert xml1 "* ]]; } &&
+    if { [[ "$FIELD" == metadata && "$*" == *"/usr/bin/awk"* ]] || [[ "$FIELD" == snapshot && "$*" == *"-convert xml1 "* ]]; } &&
         [[ "${plist:-}" == */A/device.plist ]] &&
         { [[ "$PHASE" == discovery ]] || [[ "$at_sink" == true ]]; }; then
         return "$PROBE_RC"
@@ -3601,4 +3601,44 @@ EOF
             done
         done
     done
+}
+
+@test "simulator metadata uses root XML types rather than missing-key diagnostics" {
+    run env HOME="$HOME/simulator-xml-types" PROJECT_ROOT="$PROJECT_ROOT" \
+        PATH="/usr/bin:/bin" MOLE_TEST_NO_AUTH=1 /bin/bash --noprofile --norc <<'SCRIPT'
+set -euo pipefail
+mkdir -p "$HOME/device"
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/app_caches.sh"
+for scenario in absent false true string_false integer_zero nested_true empty_neighbor wrong_state; do
+    extra=''
+    state='<integer>1</integer>'
+    expected=1
+    case "$scenario" in
+        absent) expected=0 ;;
+        false) extra='<key>isDeleted</key><false/>'; expected=0 ;;
+        true) extra='<key>isDeleted</key><true/>' ;;
+        string_false) extra='<key>isDeleted</key><string>false</string>' ;;
+        integer_zero) extra='<key>isDeleted</key><integer>0</integer>' ;;
+        nested_true) extra='<key>nested</key><dict><key>isDeleted</key><true/></dict>'; expected=0 ;;
+        empty_neighbor) extra='<key>empty</key><dict/><key>isDeleted</key><false/>'; expected=0 ;;
+        wrong_state) state='<string>1</string>' ;;
+    esac
+    printf '<plist version="1.0"><dict><key>state</key>%s%s</dict></plist>\n' "$state" "$extra" > "$HOME/device/device.plist"
+    rc=0
+    _simulator_device_is_shut_down "$HOME/device" || rc=$?
+    printf '%s returned=%s expected=%s\n' "$scenario" "$rc" "$expected"
+    if [[ "$rc" -ne "$expected" ]]; then
+        # Preserve the native host evidence, including macOS 15 diagnostics,
+        # without using its prose to make a production cleanup decision.
+        for key in state isDeleted; do
+            native_rc=0
+            native_output=$(/usr/bin/plutil -extract "$key" raw -o - "$HOME/device/device.plist" 2>&1) || native_rc=$?
+            printf 'native key=%s status=%s output=<%s>\n' "$key" "$native_rc" "$native_output"
+        done
+        exit 1
+    fi
+done
+SCRIPT
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
