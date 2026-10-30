@@ -3136,7 +3136,12 @@ _batch_render_summary() {
             success_line="Would remove ${success_count} ${success_text}"
         fi
         if [[ -n "$freed_display" ]]; then
-            if is_uninstall_dry_run; then
+            if [[ "${MOLE_DELETE_MODE:-permanent}" == "trash" ]]; then
+                # Bytes in the Trash are not free until it is emptied, so a
+                # Trash run states the size without claiming it was freed.
+                # Mole Mac made the same correction (uninstall.summary.freed).
+                success_line+=" · ${GREEN}${freed_display}${NC}"
+            elif is_uninstall_dry_run; then
                 success_line+=", would free ${GREEN}${freed_display}${NC}"
             else
                 success_line+=", freed ${GREEN}${freed_display}${NC}"

@@ -7303,3 +7303,31 @@ EOF
     [ -d "$iso/.config/mole" ] || return 1
     [ -d "$iso/.cache/mole" ] || return 1
 }
+
+@test "uninstall summary states Trash bytes without calling them freed" {
+    # A Trash run leaves the bytes in the Trash, so "freed" overclaimed until
+    # the Trash was emptied. --permanent really frees them and keeps the word.
+    local mode
+    for mode in trash permanent; do
+        run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DELETE_MODE="$mode" \
+            /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+success_count=1 failed_count=0 total_size_freed=2048
+failed_items=() success_items=("Foo")
+system_extension_warning_apps=() review_only_system_leftovers=()
+background_items_warning_apps=() running_at_uninstall_apps=()
+_batch_render_summary
+EOF
+        [ "$status" -eq 0 ] || { echo "$mode: $output"; return 1; }
+        local plain
+        plain=$(printf '%s\n' "$output" | sed $'s/\033\\[[0-9;]*m//g')
+        if [[ "$mode" == "trash" ]]; then
+            [[ "$plain" == *"Removed 1 app · 2.1MB: Foo"* ]] || { echo "$plain"; return 1; }
+            [[ "$plain" != *"freed"* ]] || { echo "$plain"; return 1; }
+        else
+            [[ "$plain" == *"Removed 1 app, freed 2.1MB: Foo"* ]] || { echo "$plain"; return 1; }
+        fi
+    done
+}
