@@ -76,11 +76,20 @@ _SIMULATOR_DEVICE_LEAVES=(
 _simulator_device_is_shut_down() {
     local plist="$1/device.plist"
     [[ -f "$plist" ]] || return 1
-    local state="" deleted=""
-    state=$(run_with_timeout 2 /usr/bin/plutil -extract state raw -o - "$plist" 2> /dev/null) || return 1
-    [[ "$state" == "1" ]] || return 1
-    deleted=$(run_with_timeout 2 /usr/bin/plutil -extract isDeleted raw -o - "$plist" 2> /dev/null) || deleted=""
-    [[ "$deleted" != "true" ]]
+    local snapshot="" state="" deleted="" probe_rc=0
+    # Read once: an absent optional key in a valid snapshot is different from
+    # an unreadable or disappearing device.plist.
+    snapshot=$(run_with_timeout 2 /usr/bin/plutil -convert xml1 -o - "$plist" 2> /dev/null) || probe_rc=$?
+    mole_rc_signal "$probe_rc" && return "$probe_rc"
+    [[ $probe_rc -eq 0 ]] || return 1
+    state=$(run_with_timeout 2 /usr/bin/plutil -extract state raw -o - - <<< "$snapshot" 2> /dev/null) || probe_rc=$?
+    mole_rc_signal "$probe_rc" && return "$probe_rc"
+    [[ $probe_rc -eq 0 && "$state" == "1" ]] || return 1
+    deleted=$(run_with_timeout 2 /usr/bin/plutil -extract isDeleted raw -o - - <<< "$snapshot" 2> /dev/null) || probe_rc=$?
+    mole_rc_signal "$probe_rc" && return "$probe_rc"
+    mole_rc_timeout "$probe_rc" && return 1
+    # plutil returns 1 for a missing optional key in the validated snapshot.
+    [[ $probe_rc -eq 1 && -z "$deleted" ]] || [[ $probe_rc -eq 0 && "$deleted" == "false" ]]
 }
 
 # A leaf qualifies only at its listed place under the Devices root, with no
@@ -108,14 +117,20 @@ _simulator_device_leaf_is_eligible() {
 _simulator_device_leaf_targets() {
     local devices_root="$HOME/Library/Developer/CoreSimulator/Devices"
     [[ -d "$devices_root" ]] || return 0
-    local device leaf target
+    local device leaf target probe_rc
     for device in "$devices_root"/*; do
         [[ -d "$device" && ! -L "$device" ]] || continue
-        _simulator_device_is_shut_down "$device" || continue
+        probe_rc=0
+        _simulator_device_is_shut_down "$device" || probe_rc=$?
+        mole_rc_signal "$probe_rc" && return "$probe_rc"
+        [[ $probe_rc -eq 0 ]] || continue
         for leaf in "${_SIMULATOR_DEVICE_LEAVES[@]}"; do
             target="$device/$leaf"
             [[ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit 2> /dev/null)" ]] || continue
-            _simulator_device_leaf_is_eligible "$target" || continue
+            probe_rc=0
+            _simulator_device_leaf_is_eligible "$target" || probe_rc=$?
+            mole_rc_signal "$probe_rc" && return "$probe_rc"
+            [[ $probe_rc -eq 0 ]] || continue
             printf '%s\n' "$target"
         done
     done
@@ -126,11 +141,11 @@ _simulator_device_leaf_targets() {
 _simulator_device_leaf_delete_guard_allows() {
     local path="${1:-}"
     _MOLE_SAFE_CLEAN_SKIP_PATH=""
-    _simulator_app_cache_delete_guard_allows || return 1
+    _simulator_app_cache_delete_guard_allows || return $?
     [[ -n "$path" ]] || return 0
     _MOLE_SAFE_CLEAN_SKIP_PATH="$path"
     _MOLE_CLEAN_GUARD_REASON="simulator device no longer shut down"
-    _simulator_device_leaf_is_eligible "$path" || return 1
+    _simulator_device_leaf_is_eligible "$path" || return $?
     _MOLE_SAFE_CLEAN_SKIP_PATH=""
     return 0
 }
@@ -150,7 +165,10 @@ _app_cache_safe_clean_guarded() {
     local _MOLE_CLEAN_GUARD_REASON="process state changed"
 
     if ! declare -f safe_clean_guarded > /dev/null 2>&1; then
-        if ! "$delete_guard"; then
+        local guard_rc=0
+        "$delete_guard" || guard_rc=$?
+        mole_rc_signal "$guard_rc" && return "$guard_rc"
+        if [[ $guard_rc -ne 0 ]]; then
             mole_report_guard_stop "$display_name" _defer_app_cache_guard_family "$delete_guard"
             return 1
         fi
@@ -339,10 +357,13 @@ clean_xcode_derived_data() {
 clean_xcode_tools() {
     local simulator_has_targets=false
     local -a simulator_device_leaves=()
-    local simulator_leaf
+    local simulator_leaf leaf_output="" leaf_rc=0 guarded_rc=0
+    leaf_output=$(_simulator_device_leaf_targets) || leaf_rc=$?
+    mole_rc_signal "$leaf_rc" && return "$leaf_rc"
+    [[ $leaf_rc -eq 0 ]] || return 0
     while IFS= read -r simulator_leaf; do
         [[ -n "$simulator_leaf" ]] && simulator_device_leaves+=("$simulator_leaf")
-    done < <(_simulator_device_leaf_targets)
+    done <<< "$leaf_output"
     # The leaves pass the same protection and whitelist filter as the other
     # targets, so a fully whitelisted simulator never reports a skip.
     if mole_cleanup_targets_exist \
@@ -362,24 +383,40 @@ clean_xcode_tools() {
                 _simulator_app_cache_delete_guard_allows \
                 "Simulator caches" \
                 ~/Library/Developer/CoreSimulator/Caches/* \
-                "Simulator cache" || return 0
+                "Simulator cache" || {
+                guarded_rc=$?
+                mole_rc_signal "$guarded_rc" && return "$guarded_rc"
+                return 0
+            }
             _app_cache_safe_clean_guarded \
                 _simulator_app_cache_delete_guard_allows \
                 "Simulator temp files" \
                 ~/Library/Developer/CoreSimulator/Devices/*/data/tmp/* \
-                "Simulator temp files" || return 0
+                "Simulator temp files" || {
+                guarded_rc=$?
+                mole_rc_signal "$guarded_rc" && return "$guarded_rc"
+                return 0
+            }
             if [[ ${#simulator_device_leaves[@]} -gt 0 ]]; then
                 _app_cache_safe_clean_guarded \
                     _simulator_device_leaf_delete_guard_allows \
                     "Simulator device data" \
                     "${simulator_device_leaves[@]}" \
-                    "Simulator device data" || return 0
+                    "Simulator device data" || {
+                    guarded_rc=$?
+                    mole_rc_signal "$guarded_rc" && return "$guarded_rc"
+                    return 0
+                }
             fi
             _app_cache_safe_clean_guarded \
                 _simulator_app_cache_delete_guard_allows \
                 "CoreSimulator logs" \
                 ~/Library/Logs/CoreSimulator/* \
-                "CoreSimulator logs" || return 0
+                "CoreSimulator logs" || {
+                guarded_rc=$?
+                mole_rc_signal "$guarded_rc" && return "$guarded_rc"
+                return 0
+            }
         else
             if [[ $simulator_state -eq 2 ]]; then
                 echo -e "  ${GRAY}${ICON_WARNING}${NC} Simulator caches · skipped (process state unknown)"
@@ -408,7 +445,11 @@ clean_xcode_tools() {
                     _xcode_app_cache_delete_guard_allows \
                     "Xcode cache" \
                     ~/Library/Caches/com.apple.dt.Xcode/* \
-                    "Xcode cache" || return 0
+                    "Xcode cache" || {
+                    guarded_rc=$?
+                    mole_rc_signal "$guarded_rc" && return "$guarded_rc"
+                    return 0
+                }
             fi
 
             # The cache pass may take long enough for the separate build
@@ -436,7 +477,11 @@ clean_xcode_tools() {
                 _xcode_app_cache_delete_guard_allows \
                 "Xcode build products" \
                 ~/Library/Developer/Xcode/Products/* \
-                "Xcode build products" || return 0
+                "Xcode build products" || {
+                guarded_rc=$?
+                mole_rc_signal "$guarded_rc" && return "$guarded_rc"
+                return 0
+            }
             clean_xcode_derived_data || return $?
         else
             if [[ $xcode_state -eq 2 ]]; then

@@ -1327,7 +1327,7 @@ prune_stale_mole_tmpdir_leftovers() {
     (
         cd "$resolved_root" 2> /dev/null || exit 0
         local token_glob='mole.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]'
-        local registries live_registries keep
+        local registries live_registries keep registry_contents
 
         registries=$(find . -mindepth 1 -maxdepth 1 -name 'mole.registry.[1-9]*' \
             ! -name 'mole.registry.*[!0-9]*' -user "$uid" -type f -print 2> /dev/null |
@@ -1339,8 +1339,11 @@ prune_stale_mole_tmpdir_leftovers() {
         # entries its registry lists, however old they are.
         keep="/"
         if [[ -n "$live_registries" ]]; then
-            keep+=$'\n'$(printf '%s\n' "$live_registries" | sed 's#^#mole.registry.#' |
-                tr '\n' '\0' | xargs -0 cat -- 2> /dev/null | sed 's#^.*/##' |
+            # A partial read cannot prove any old entry is unowned. Separate
+            # read success from the valid case where filtering finds no names.
+            registry_contents=$(printf '%s\n' "$live_registries" | sed 's#^#mole.registry.#' |
+                tr '\n' '\0' | xargs -0 cat -- 2> /dev/null) || exit 0
+            keep+=$'\n'$(printf '%s\n' "$registry_contents" | sed 's#^.*/##' |
                 grep -xE 'mole\.[A-Za-z0-9]{6}' 2> /dev/null) || true
         fi
 

@@ -467,3 +467,31 @@ EOF
     [ "$status" -eq 0 ] || return 1
     [[ "$output" == *PASS* ]]
 }
+
+@test "Darwin temp prune retains every candidate when a live registry cannot be read" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/base.sh"
+darwin_root="$HOME/unreadable-registry"
+mkdir -p "$darwin_root"
+_mole_darwin_user_temp_dir() { printf '%s\n' "$darwin_root"; }
+for mode in 000 600; do
+    printf fixture > "$darwin_root/mole.Owned1"
+    printf fixture > "$darwin_root/mole.Stale1"
+    printf '%s\n' "$darwin_root/mole.Owned1" > "$darwin_root/mole.registry.$$"
+    touch -t 202001010101 "$darwin_root/mole.Owned1" "$darwin_root/mole.Stale1"
+    # A second live registry is readable, so the failed read can be partial.
+    printf '%s\n' "$darwin_root/mole.Other1" > "$darwin_root/mole.registry.$PPID"
+    chmod "$mode" "$darwin_root/mole.registry.$$"
+    prune_stale_mole_tmpdir_leftovers "$darwin_root"
+    chmod 600 "$darwin_root/mole.registry.$$"
+    [[ -f "$darwin_root/mole.Owned1" ]] || { echo OWNED_REMOVED; exit 1; }
+    if [[ "$mode" == 000 ]]; then
+        [[ -f "$darwin_root/mole.Stale1" ]] || { echo INCOMPLETE_SCAN_REMOVED; exit 2; }
+    else
+        [[ ! -e "$darwin_root/mole.Stale1" ]] || { echo CONTROL_NOT_REMOVED; exit 3; }
+    fi
+done
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}

@@ -3553,3 +3553,52 @@ SCRIPT
     [ "$status" -eq 0 ]
     [ "$output" = "version_check " ]
 }
+
+@test "simulator device metadata timeouts retain the device and signals stop later devices" {
+    for field in snapshot state isDeleted; do
+        for phase in discovery sink; do
+            for probe_rc in 124 130 143; do
+                run env HOME="$HOME/metadata-$field-$phase-$probe_rc" PROJECT_ROOT="$PROJECT_ROOT" \
+                    PATH="/usr/bin:/bin" MOLE_TEST_NO_AUTH=1 FIELD="$field" PHASE="$phase" PROBE_RC="$probe_rc" \
+                    /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+mkdir -p "$HOME"
+source "$PROJECT_ROOT/bin/clean.sh"
+pgrep() { return 1; }
+_coresimulator_activity_state() { return 1; }
+at_sink=false
+_simulator_app_cache_delete_guard_allows() { at_sink=true; return 0; }
+eval "$(declare -f run_with_timeout | sed '1s/run_with_timeout/original_run_with_timeout/')"
+run_with_timeout() {
+    if { [[ "$*" == *"-extract $FIELD "* ]] || [[ "$FIELD" == snapshot && "$*" == *"-convert xml1 "* ]]; } &&
+        [[ "${plist:-}" == */A/device.plist ]] &&
+        { [[ "$PHASE" == discovery ]] || [[ "$at_sink" == true ]]; }; then
+        return "$PROBE_RC"
+    fi
+    original_run_with_timeout "$@"
+}
+devices="$HOME/Library/Developer/CoreSimulator/Devices"
+for device in A B; do
+    mkdir -p "$devices/$device/data/Library/Caches/tiles"
+    printf fixture > "$devices/$device/data/Library/Caches/tiles/tile"
+    /usr/bin/plutil -create xml1 "$devices/$device/device.plist"
+    /usr/bin/plutil -insert state -integer 1 "$devices/$device/device.plist"
+done
+DRY_RUN=false
+rc=0
+clean_xcode_tools || rc=$?
+printf 'field=%s phase=%s probe=%s returned=%s\n' "$FIELD" "$PHASE" "$PROBE_RC" "$rc"
+[[ -f "$devices/A/data/Library/Caches/tiles/tile" ]] || { echo A_REMOVED; exit 1; }
+if [[ "$PROBE_RC" -gt 127 ]]; then
+    [[ "$rc" -eq "$PROBE_RC" ]] || exit 2
+    [[ -f "$devices/B/data/Library/Caches/tiles/tile" ]] || { echo LATER_REMOVED; exit 3; }
+else
+    [[ "$rc" -eq 0 ]] || exit 4
+    [[ ! -e "$devices/B/data/Library/Caches" ]] || { echo LATER_NOT_REACHED; exit 5; }
+fi
+EOF
+                [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+            done
+        done
+    done
+}
