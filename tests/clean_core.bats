@@ -1727,14 +1727,16 @@ EOF
 }
 
 @test "_clean_mail_downloads removes old attachments" {
-    mkdir -p "$HOME/Library/Mail Downloads"
-    touch "$HOME/Library/Mail Downloads/old.pdf"
-    touch -t 202301010000 "$HOME/Library/Mail Downloads/old.pdf"
+    # One opening's folder with Mail's untouched copy inside, a month old.
+    mkdir -p "$HOME/Library/Mail Downloads/OPENING"
+    touch "$HOME/Library/Mail Downloads/OPENING/old.pdf"
+    touch -t 202301010000 "$HOME/Library/Mail Downloads/OPENING/old.pdf"
+    touch -t 202301010000 "$HOME/Library/Mail Downloads/OPENING"
 
     # The cleanup threshold uses allocated blocks; a sparse file stays below it.
     dd if=/dev/zero of="$HOME/Library/Mail Downloads/dummy.dat" bs=1024 count=6000 2> /dev/null
 
-    [ -f "$HOME/Library/Mail Downloads/old.pdf" ]
+    [ -f "$HOME/Library/Mail Downloads/OPENING/old.pdf" ]
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
@@ -1745,13 +1747,15 @@ _clean_mail_downloads
 EOF
 
     [ "$status" -eq 0 ]
-    [ ! -f "$HOME/Library/Mail Downloads/old.pdf" ]
+    [ ! -f "$HOME/Library/Mail Downloads/OPENING/old.pdf" ]
 }
 
 @test "_clean_mail_downloads uses dry-run wording and keeps attachments" {
-    mkdir -p "$HOME/Library/Mail Downloads"
-    touch "$HOME/Library/Mail Downloads/old.pdf"
-    touch -t 202301010000 "$HOME/Library/Mail Downloads/old.pdf"
+    # One opening's folder with Mail's untouched copy inside, a month old.
+    mkdir -p "$HOME/Library/Mail Downloads/OPENING"
+    touch "$HOME/Library/Mail Downloads/OPENING/old.pdf"
+    touch -t 202301010000 "$HOME/Library/Mail Downloads/OPENING/old.pdf"
+    touch -t 202301010000 "$HOME/Library/Mail Downloads/OPENING"
 
     # The cleanup threshold uses allocated blocks; a sparse file stays below it.
     dd if=/dev/zero of="$HOME/Library/Mail Downloads/dummy.dat" bs=1024 count=6000 2> /dev/null
@@ -1767,7 +1771,7 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"Would clean 1 mail attachments"* ]] || return 1
     [[ "$output" != *"Cleaned 1 mail attachments"* ]] || return 1
-    [ -f "$HOME/Library/Mail Downloads/old.pdf" ]
+    [ -f "$HOME/Library/Mail Downloads/OPENING/old.pdf" ]
 }
 
 @test "clean_time_machine_failed_backups detects running backup correctly" {

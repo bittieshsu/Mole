@@ -2903,7 +2903,7 @@ EOF
     # sink, then with pgrep failing, where the sink must not run.
     local row case_name sink display_name pgrep_rc case_home failures=""
     for row in \
-        "mail|Mail Downloads/old.bin|Mail Downloads" \
+        "mail|Mail Downloads/OPENING/old.bin|Mail Downloads" \
         "arc|Arc code cache|Arc profile caches" \
         "brave|Brave code cache|Brave profile caches" \
         "vivaldi|Vivaldi code cache|Vivaldi profile caches" \
@@ -2930,9 +2930,11 @@ safe_remove() { echo "SINK:$1"; }
 support="$HOME/Library/Application Support"
 case "$CASE" in
     mail)
-        mkdir -p "$HOME/Library/Mail Downloads"
-        echo x > "$HOME/Library/Mail Downloads/old.bin"
-        touch -t 202401010000 "$HOME/Library/Mail Downloads/old.bin"
+        # Mail keeps each opened attachment in its own folder.
+        mkdir -p "$HOME/Library/Mail Downloads/OPENING"
+        echo x > "$HOME/Library/Mail Downloads/OPENING/old.bin"
+        touch -t 202401010000 "$HOME/Library/Mail Downloads/OPENING/old.bin"
+        touch -t 202401010000 "$HOME/Library/Mail Downloads/OPENING"
         _clean_mail_downloads
         ;;
     arc)

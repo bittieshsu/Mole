@@ -415,6 +415,52 @@ _clean_incomplete_downloads() {
     done
 }
 
+# Mail writes one folder per opened attachment under Mail Downloads and puts
+# the copy inside it. Only a copy nobody touched is Mail's to recreate: a file
+# saved over keeps a modification time later than its creation, and a file
+# saved beside it (an export, a Save As, an Office lock file) is born after the
+# folder or moves the folder's own modification time. Either may be the only
+# place an edit lives, so the folder must be older than the age window and
+# neither it nor the file may have been written since Mail created them. The
+# same predicate as Mole Mac's MailDownloadsPolicy, asked again at the sink.
+_mail_attachment_is_untouched_copy() {
+    local path="$1" root="$2" age_days="$3"
+    local rel="${path#"$root"/}"
+    [[ "$rel" != "$path" && "$rel" == */* ]] || return 1
+    local folder_name="${rel%%/*}" file_name="${rel#*/}"
+    [[ -n "$folder_name" && -n "$file_name" && "$file_name" != */* ]] || return 1
+    [[ "$folder_name" != .* && "$file_name" != .* ]] || return 1
+    local ancestor="$root"
+    while [[ "$ancestor" != "$HOME" ]]; do
+        [[ "$ancestor" == "$HOME/"* && ! -L "$ancestor" ]] || return 1
+        ancestor="${ancestor%/*}"
+    done
+
+    local file_info="" folder_info=""
+    file_info=$("$STAT_BSD" -f '%HT|%l|%u|%B|%m' "$path" 2> /dev/null) || return 1
+    folder_info=$("$STAT_BSD" -f '%HT|%B|%m' "$root/$folder_name" 2> /dev/null) || return 1
+    local f_type f_links f_uid f_birth f_mtime d_type d_birth d_mtime
+    IFS='|' read -r f_type f_links f_uid f_birth f_mtime <<< "$file_info"
+    IFS='|' read -r d_type d_birth d_mtime <<< "$folder_info"
+    [[ "$f_type" == "Regular File" && "$d_type" == "Directory" ]] || return 1
+    [[ "$f_links" == "1" && "$f_uid" == "$UID" ]] || return 1
+    local value
+    for value in "$f_birth" "$f_mtime" "$d_birth" "$d_mtime" "$age_days"; do
+        [[ "$value" =~ ^[0-9]+$ ]] || return 1
+    done
+    local now=""
+    now=$(date +%s 2> /dev/null) || return 1
+    [[ "$now" =~ ^[0-9]+$ ]] || return 1
+    # Writing the copy itself can take a moment, hence two seconds of slack.
+    ((f_birth > 0 && f_mtime <= f_birth + 2)) || return 1
+    ((d_birth > 0 && d_birth < now - age_days * 86400)) || return 1
+    ((f_birth <= d_birth + 2 && d_mtime <= d_birth + 2)) || return 1
+}
+
+_mail_attachment_delete_guard() {
+    _mail_attachment_is_untouched_copy "$1" "$_MOLE_MAIL_GUARD_ROOT" "$_MOLE_MAIL_GUARD_AGE_DAYS"
+}
+
 # Internal: Clean old mail downloads.
 _clean_mail_downloads() {
     local mail_age_days=${MOLE_MAIL_AGE_DAYS:-}
@@ -477,8 +523,14 @@ _clean_mail_downloads() {
             if [[ "$dir_size_kb" -lt "$min_kb" ]]; then
                 continue
             fi
+            local _MOLE_MAIL_GUARD_ROOT="$target_path"
+            local _MOLE_MAIL_GUARD_AGE_DAYS="$mail_age_days"
             while IFS= read -r -d '' file_path; do
-                if [[ -f "$file_path" ]]; then
+                if _mail_attachment_is_untouched_copy "$file_path" "$target_path" "$mail_age_days" &&
+                    _mole_snapshot_path_identity "$file_path"; then
+                    local file_parent="$_MOLE_PATH_SNAPSHOT_PARENT"
+                    local file_parent_id="$_MOLE_PATH_SNAPSHOT_PARENT_ID"
+                    local file_target_id="$_MOLE_PATH_SNAPSHOT_TARGET_ID"
                     local file_size_kb
                     size_rc=0
                     file_size_kb=$(get_path_size_kb "$file_path") || size_rc=$?
@@ -497,7 +549,9 @@ _clean_mail_downloads() {
                             record_dry_run_cleanup_target "$file_path" "$file_size_kb" 1 true || continue
                         fi
                         MOLE_DRY_RUN=1 safe_remove "$file_path" true "$file_size_kb" && remove_rc=0
-                    elif safe_remove "$file_path" true "$file_size_kb"; then
+                    elif _MOLE_SAFE_REMOVE_FINAL_GUARD=_mail_attachment_delete_guard safe_remove \
+                        "$file_path" true "$file_size_kb" "" \
+                        "$file_parent" "$file_parent_id" "$file_target_id"; then
                         remove_rc=0
                     fi
                     if [[ $remove_rc -eq 0 ]]; then
@@ -505,7 +559,7 @@ _clean_mail_downloads() {
                         cleaned_kb=$((cleaned_kb + file_size_kb))
                     fi
                 fi
-            done < <(command find "$target_path" -type f -mtime +"$mail_age_days" -print0 2> /dev/null || true)
+            done < <(command find "$target_path" -mindepth 2 -maxdepth 2 -type f -print0 2> /dev/null || true)
         fi
     done
     if [[ "$spinner_active" == "true" ]]; then
