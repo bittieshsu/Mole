@@ -1021,7 +1021,13 @@ opt_prune_spotlight_orphan_rules() {
                 # Only act on well-formed bundle ids; bundle_has_installed_app
                 # double-checks with mdfind and a filesystem scan, so a return of
                 # 1 means the app is genuinely gone. Anything else is kept.
-                if ! mole_is_reverse_dns_bundle_id "$entry"; then
+                # Spotlight stores its own switches here too, such as
+                # Custom.relatedContents (Show Related Content), which pass the
+                # reverse-DNS shape but name no app; removing one flips the
+                # switch back on (#1878). Only a lowercase first label, the
+                # shape Mole Mac's spotlightRuleNamesAnApp accepts, can be an app.
+                if ! mole_is_reverse_dns_bundle_id "$entry" ||
+                    [[ ! "${entry%%.*}" =~ ^[a-z0-9]+$ ]]; then
                     keep+=("$entry")
                 else
                     local resolver_rc=0

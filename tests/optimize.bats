@@ -1036,6 +1036,49 @@ EOF
 	[[ "$output" != *"com.lm.william.TwinklingCard"* ]]
 }
 
+@test "opt_prune_spotlight_orphan_rules keeps Spotlight's own switches (#1878)" {
+	# Custom.relatedContents is the Show Related Content switch. It passes the
+	# reverse-DNS shape, so the resolver used to call it a missing app and the
+	# switch came back on after every optimize.
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+PLIST="$HOME/Library/Preferences/com.apple.spotlight.plist"
+mkdir -p "$(dirname "$PLIST")"
+rm -f "$PLIST"
+/usr/libexec/PlistBuddy \
+    -c "Add :EnabledPreferenceRules array" \
+    -c "Add :EnabledPreferenceRules:0 string Custom.relatedContents" \
+    -c "Add :EnabledPreferenceRules:1 string MENU_WEBSEARCH.enabled" \
+    -c "Add :EnabledPreferenceRules:2 string com.gone.App" \
+    "$PLIST" >/dev/null 2>&1
+defaults() {
+    case "$1" in
+        read) return 0 ;;
+        write | delete) echo "DEFAULTS: $*" ;;
+    esac
+}
+bundle_has_installed_app() {
+    echo "RESOLVED: $1"
+    return 1
+}
+execute_optimization spotlight_orphan_rules_cleanup
+EOF
+
+	[ "$status" -eq 0 ] || { echo "$output"; return 1; }
+	# The positive control: a real orphan is still removed.
+	[[ "$output" == *"Removed 1 orphan"* ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"RESOLVED: com.gone.App"* ]] || return 1
+	[[ "$output" != *"RESOLVED: Custom.relatedContents"* ]] || return 1
+	[[ "$output" != *"RESOLVED: MENU_WEBSEARCH.enabled"* ]] || return 1
+	local written
+	written=$(printf '%s\n' "$output" | grep 'DEFAULTS: write')
+	[[ "$written" == *"Custom.relatedContents"* ]] || { echo "$output"; return 1; }
+	[[ "$written" == *"MENU_WEBSEARCH.enabled"* ]] || return 1
+	[[ "$written" != *"com.gone.App"* ]]
+}
+
 @test "opt_prune_spotlight_orphan_rules dry-run reports but does not write" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
