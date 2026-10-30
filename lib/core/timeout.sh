@@ -379,8 +379,11 @@ run_with_timeout() {
         _mole_timeout_debug "[TIMEOUT] Shell fallback, ${duration}s: $*"
     fi
 
-    # Start command in background
-    "$@" &
+    # Start command in background. Without job control bash gives a background
+    # command /dev/null as stdin, so pass the caller's stdin on explicitly, as
+    # the timeout binary and perl backends do: callers feed osascript and awk
+    # through a here-document.
+    "$@" <&0 &
     local cmd_pid=$!
 
     # Start timeout killer in background.
@@ -412,8 +415,11 @@ run_with_timeout() {
     local previous_int_trap
     previous_int_trap=$(trap -p INT || true)
 
-    # Forward SIGINT to the command while preserving the caller's trap.
-    trap 'interrupted=1; kill -INT "$cmd_pid" 2>/dev/null || true; _mole_cleanup_timeout_killer "$killer_pid"' INT
+    # Stop the command on SIGINT while preserving the caller's trap. A background
+    # command ignores SIGINT when job control is off, so forwarding INT left it
+    # running with no deadline once the killer was gone; send TERM, as the perl
+    # backend does.
+    trap 'interrupted=1; kill -TERM "$cmd_pid" 2>/dev/null || true; _mole_cleanup_timeout_killer "$killer_pid"' INT
 
     # Wait for command to complete
     local exit_code=0
@@ -422,14 +428,30 @@ run_with_timeout() {
     exit_code=$?
     set -e
 
+    _mole_cleanup_timeout_killer "$killer_pid"
+
+    if [[ $interrupted -eq 1 ]]; then
+        # A command that ignores TERM gets the same two-second grace as the
+        # timeout binary's -k 2 before SIGKILL. The caller's trap stays off
+        # until then: its exit on a second Ctrl-C would skip the KILL.
+        trap 'interrupted=1' INT
+        local grace_ticks=0
+        while kill -0 "$cmd_pid" 2> /dev/null && [[ $grace_ticks -lt 20 ]]; do
+            sleep 0.1 || true
+            grace_ticks=$((grace_ticks + 1))
+        done
+        if kill -0 "$cmd_pid" 2> /dev/null; then
+            kill -KILL "$cmd_pid" 2> /dev/null || true
+        fi
+        wait "$cmd_pid" 2> /dev/null || true
+    fi
+
     if [[ -n "$previous_int_trap" ]]; then
         # eval: restore previous trap captured by $(trap -p INT)
         eval "$previous_int_trap"
     else
         trap - INT
     fi
-
-    _mole_cleanup_timeout_killer "$killer_pid"
 
     if [[ $interrupted -eq 1 ]]; then
         return 130
