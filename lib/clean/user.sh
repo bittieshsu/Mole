@@ -124,11 +124,20 @@ clean_trash() {
 
     local cleaned_count=0
     local skipped_count=0
+    local processed_count=0
     while IFS= read -r -d '' item; do
         if safe_remove "$item" true; then
             cleaned_count=$((cleaned_count + 1))
         else
             skipped_count=$((skipped_count + 1))
+        fi
+        # A Trash of 17,000 small folders took 18 minutes behind a bare
+        # "Emptying trash..." that read as a hang (2026-10-30), so a long
+        # run shows its count every 100 items. Without a spinner (no
+        # terminal) the update returns before doing anything.
+        processed_count=$((processed_count + 1))
+        if [[ $trash_count -gt 100 && $((processed_count % 100)) -eq 0 ]]; then
+            update_inline_spinner_message "Emptying trash... $processed_count/$trash_count" || true
         fi
     done < <(command find "$HOME/.Trash" -mindepth 1 -maxdepth 1 -print0 2> /dev/null || true)
 

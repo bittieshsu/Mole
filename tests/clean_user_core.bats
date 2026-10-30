@@ -81,6 +81,32 @@ EOF
     [[ "$output" != *"Trash"* ]]
 }
 
+@test "emptying a large Trash reports its count every 100 items" {
+    local test_home="$HOME/trash-progress-home"
+    mkdir -p "$test_home/.Trash"
+    local i
+    for i in $(seq 1 250); do
+        mkdir "$test_home/.Trash/.com.openai.codex.T$i"
+    done
+
+    run env HOME="$test_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+is_path_whitelisted() { return 1; }
+safe_remove() { return 0; }
+update_inline_spinner_message() { echo "SPINNER:$1"; }
+clean_trash
+EOF
+
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"SPINNER:Emptying trash... 100/250"* ]] || return 1
+    [[ "$output" == *"SPINNER:Emptying trash... 200/250"* ]] || return 1
+    [[ "$output" != *"SPINNER:Emptying trash... 250/250"* ]] || return 1
+    [[ "$output" == *"Trash · emptied, 250 items"* ]] || return 1
+    rm -rf "$test_home"
+}
+
 @test "incomplete downloads are kept when the open-file view is incomplete (#1471)" {
     local partial="$HOME/Downloads/pending.crdownload"
     mkdir -p "$(dirname "$partial")"
