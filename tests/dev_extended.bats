@@ -1767,6 +1767,8 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
+# Idle: these cases cover retention, not the open-file hold.
+_mole_container_cache_has_open_handle() { return 1; }
 note_activity() { :; }
 safe_clean() { echo "$1|$2"; }
 clean_dev_ai_agents
@@ -1781,6 +1783,87 @@ EOF
     [[ "$output" == *"/1.0.5|GitHub Copilot CLI old version"* ]] || return 1
     [[ "$output" == *"/1.0.32|GitHub Copilot CLI old version"* ]] || return 1
     [[ "$output" != *"/1.0.34|"* ]]
+}
+
+@test "clean_dev_ai_agents keeps an old release a running session still has open" {
+    # Claude Code keeps each session on the binary it started from; a session
+    # was found running 2.1.311 from the Trash after Mole removed it.
+    local claude_root="$HOME/.local/share/claude/versions"
+    rm -rf "$HOME/.local/share/claude" "$HOME/.local/share/cursor-agent" "$HOME/.copilot"
+    mkdir -p "$claude_root"
+    touch -t 202604160000 "$claude_root/2.1.110"
+    touch -t 202604170000 "$claude_root/2.1.111"
+    touch -t 202604180000 "$claude_root/2.1.112"
+    touch -t 202604190000 "$claude_root/2.1.113"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+note_activity() { :; }
+safe_clean() { echo "$1|$2"; }
+_mole_container_cache_has_open_handle() {
+    case "${1##*/}" in
+        2.1.111) return 0 ;; # a session runs it
+        2.1.110) return 2 ;; # lsof could not tell
+        *) return 1 ;;
+    esac
+}
+clean_dev_ai_agents
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    # The positive control: an idle old release still goes.
+    [[ "$output" == *"/2.1.112|Claude Code old version"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"/2.1.111|"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"/2.1.110|"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"/2.1.113|"* ]] || return 1
+    [[ "$output" != *"stopped"* ]]
+}
+
+@test "clean_dev_ai_agents keeps an open old release through the real safe_clean_guarded" {
+    # Production loads bin/clean.sh, so the guard runs inside _safe_clean_impl,
+    # not the standalone fallback loop above.
+    local claude_root="$HOME/.local/share/claude/versions"
+    rm -rf "$HOME/.local/share/claude" "$HOME/.local/share/cursor-agent" "$HOME/.copilot"
+    mkdir -p "$claude_root"
+    touch -t 202604160000 "$claude_root/2.1.110"
+    touch -t 202604170000 "$claude_root/2.1.111"
+    touch -t 202604180000 "$claude_root/2.1.112"
+    touch -t 202604190000 "$claude_root/2.1.113"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/bin/clean.sh"
+DRY_RUN=false
+files_cleaned=0
+total_size_cleaned=0
+total_items=0
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+start_inline_spinner() { :; }
+stop_inline_spinner() { :; }
+note_activity() { :; }
+is_path_whitelisted() { return 1; }
+get_cleanup_path_size_kb() { echo 1; }
+safe_remove() { echo "REMOVE|$1"; return 0; }
+_mole_container_cache_has_open_handle() {
+    case "${1##*/}" in
+        2.1.111) return 0 ;;
+        2.1.110) return 2 ;;
+        *) return 1 ;;
+    esac
+}
+declare -f safe_clean_guarded > /dev/null || { echo "NO_GUARDED"; exit 1; }
+clean_dev_ai_agents
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"REMOVE|$claude_root/2.1.112"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"REMOVE|$claude_root/2.1.111"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"REMOVE|$claude_root/2.1.110"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"REMOVE|$claude_root/2.1.113"* ]]
 }
 
 @test "clean_dev_ai_agents protects the active version pointed at by ~/.local/bin/<agent>" {
@@ -1807,6 +1890,8 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
+# Idle: these cases cover retention, not the open-file hold.
+_mole_container_cache_has_open_handle() { return 1; }
 note_activity() { :; }
 safe_clean() { echo "$1|$2"; }
 clean_dev_ai_agents
@@ -1865,6 +1950,8 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
+# Idle: these cases cover retention, not the open-file hold.
+_mole_container_cache_has_open_handle() { return 1; }
 note_activity() { :; }
 safe_clean() { echo "$1"; }
 MOLE_AI_AGENTS_KEEP=2 clean_dev_ai_agents
@@ -3102,6 +3189,8 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/dev.sh"
+# Idle: these cases cover retention, not the open-file hold.
+_mole_container_cache_has_open_handle() { return 1; }
 note_activity() { :; }
 safe_clean() { echo "$1|$2"; }
 clean_dev_ai_agents

@@ -3543,14 +3543,35 @@ _versioned_agent_delete_guard_allows() {
         fi
     fi
 
-    local planned_target
+    local planned_target planned=false
     if [[ ${#_MOLE_VERSIONED_AGENT_CLEANUP_TARGETS[@]} -gt 0 ]]; then
         for planned_target in "${_MOLE_VERSIONED_AGENT_CLEANUP_TARGETS[@]}"; do
-            [[ "$planned_target" == "$target" ]] && return 0
+            [[ "$planned_target" == "$target" ]] && planned=true && break
         done
     fi
+    if [[ "$planned" != "true" ]]; then
+        _MOLE_CLEAN_GUARD_REASON="retention changed"
+        return 1
+    fi
 
-    _MOLE_CLEAN_GUARD_REASON="retention changed"
+    # A Claude Code session keeps running the version it started from, so a
+    # release older than the kept ones can still be executing: on 2026-10-31
+    # a session was found running 2.1.311 from the Trash. Keep a version any
+    # process has open, and keep it when lsof cannot tell; either concerns
+    # this version alone, so the rest of the family still goes. Mole Mac holds
+    # the same releases (embeddedAgentReleases).
+    local open_rc=0
+    _mole_container_cache_has_open_handle "$target" || open_rc=$?
+    [[ $open_rc -eq 1 ]] && return 0
+    if [[ $open_rc -gt 2 ]] && mole_rc_timeout_or_signal "$open_rc"; then
+        return "$open_rc"
+    fi
+    if [[ $open_rc -eq 0 ]]; then
+        debug_log "Versioned agent release kept, a process has it open: $target"
+    else
+        debug_log "Versioned agent release kept, open-file state unknown: $target"
+    fi
+    _MOLE_SAFE_CLEAN_SKIP_PATH="$target"
     return 1
 }
 
@@ -3604,9 +3625,13 @@ clean_versioned_agent_root() {
     local target
     for target in "${_MOLE_VERSIONED_AGENT_RETENTION_TARGETS[@]}"; do
         local guard_rc=0
+        _MOLE_SAFE_CLEAN_SKIP_PATH=""
         _versioned_agent_delete_guard_allows "$target" || guard_rc=$?
         if [[ $guard_rc -ne 0 ]]; then
             mole_rc_timeout_or_signal "$guard_rc" && return "$guard_rc"
+            # The same contract as safe_clean_guarded: a refusal that names
+            # this target keeps it alone.
+            [[ "$_MOLE_SAFE_CLEAN_SKIP_PATH" == "$target" ]] && continue
             _report_versioned_agent_guard_stop "$label"
             return 0
         fi
