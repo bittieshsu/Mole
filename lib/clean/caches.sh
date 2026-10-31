@@ -979,6 +979,7 @@ clean_python_bytecode_cache_group() {
     if [[ $removed_count -eq 0 ]]; then
         return 0
     fi
+    stop_section_spinner
 
     local size_human
     size_human=$(bytes_to_human "$((total_size_kb * 1024))")
@@ -1050,15 +1051,17 @@ clean_project_caches() {
         scan_manifest=""
     fi
 
-    if [[ -t 1 ]]; then
-        stop_inline_spinner
-    fi
-
     local collect_rc=0
     if [[ $scan_rc -ge 128 ]]; then
         collect_rc=$scan_rc
     elif [[ -s "$scan_manifest" ]]; then
+        # Checking the matches took 1.1s before the first row; the spinner
+        # stays up until a row prints (rows stop it themselves).
+        if [[ -t 1 ]]; then start_section_spinner "Checking project caches..."; fi
         collect_project_cache_scans "$scan_manifest" || collect_rc=$?
+    fi
+    if [[ -t 1 ]]; then
+        stop_inline_spinner
     fi
     if [[ -n "$scan_manifest" ]]; then
         rm -f "$scan_manifest" # SAFE: exact scratch file created by create_temp_file
@@ -1354,6 +1357,7 @@ collect_project_cache_scans() {
     done
 
     if [[ $failed_scan_count -gt 0 ]]; then
+        stop_section_spinner
         local scan_noun="root scans"
         if [[ $failed_scan_count -eq 1 ]]; then
             scan_noun="root scan"

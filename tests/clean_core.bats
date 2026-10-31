@@ -351,6 +351,40 @@ EOF
     [[ "$output" != *"would clean"* ]]
 }
 
+@test "safe_clean_guarded dry-run shows loading while the guard checks each item" {
+    if ! /usr/bin/script -q /dev/null /usr/bin/true < /dev/null > /dev/null 2>&1; then
+        skip "script cannot allocate a TTY in this environment"
+    fi
+    local base="$HOME/safe_clean_guarded_dry_loading"
+    mkdir -p "$base"
+    local i
+    for i in 1 2 3 4 5; do printf 'x' > "$base/item$i.log"; done
+    local raw="$HOME/guarded-dry-loading.raw"
+
+    # shellcheck disable=SC2016  # inner bash expands these from its environment
+    PROJECT_ROOT="$PROJECT_ROOT" HOME="$HOME" BASE="$base" TERM=xterm-256color MOLE_TEST_MODE=1 \
+        /usr/bin/script -q -F "$raw" /bin/bash --noprofile --norc -c '
+            set -euo pipefail
+            source "$PROJECT_ROOT/lib/core/common.sh"
+            source "$PROJECT_ROOT/bin/clean.sh"
+            DRY_RUN=true
+            spinning=""
+            start_section_spinner() { spinning="$1"; echo "SPIN:$1"; }
+            stop_section_spinner() { spinning=""; echo "STOP"; }
+            stop_inline_spinner() { spinning=""; echo "STOP"; }
+            note_activity() { :; }
+            is_path_whitelisted() { return 1; }
+            delete_guard() { echo "GUARD_WHILE:${spinning:-none}"; }
+            safe_clean_guarded delete_guard "$BASE"/item*.log "Guarded cache"
+        ' < /dev/null > /dev/null 2>&1
+
+    local content
+    content=$(tr -d '\r' < "$raw")
+    [[ "$content" == *"GUARD_WHILE:Checking Guarded cache..."* ]] || { echo "$content"; return 1; }
+    [[ "$content" != *"GUARD_WHILE:none"* ]] || { echo "$content"; return 1; }
+    [[ "$content" == *"GUARD_WHILE:Checking Guarded cache..."*"STOP"*"Guarded cache"*"dry"* ]] || { echo "$content"; return 1; }
+}
+
 @test "safe_clean_guarded dry-run stops at the first target-specific denial" {
     local base="$HOME/safe_clean_guarded_dry_targets"
     mkdir -p "$base/a" "$base/b"

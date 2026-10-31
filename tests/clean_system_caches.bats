@@ -492,6 +492,40 @@ EOF
     rm -rf "$HOME/Projects"
 }
 
+@test "clean_project_caches keeps loading up while it checks matches and stops it before a row" {
+    if ! /usr/bin/script -q /dev/null /usr/bin/true < /dev/null > /dev/null 2>&1; then
+        skip "script cannot allocate a TTY in this environment"
+    fi
+    mkdir -p "$HOME/Projects/python-app/pkg/__pycache__"
+    touch "$HOME/Projects/python-app/pyproject.toml"
+    touch "$HOME/Projects/python-app/pkg/__pycache__/module.pyc"
+    local raw="$HOME/project-cache-loading.raw"
+
+    # shellcheck disable=SC2016  # inner bash expands these from its environment
+    PROJECT_ROOT="$PROJECT_ROOT" HOME="$HOME" TERM=xterm-256color \
+        /usr/bin/script -q -F "$raw" /bin/bash --noprofile --norc -c '
+            set -euo pipefail
+            source "$PROJECT_ROOT/lib/core/common.sh"
+            source "$PROJECT_ROOT/lib/clean/caches.sh"
+            DRY_RUN=true
+            spinning=""
+            start_inline_spinner() { spinning="$1"; }
+            start_section_spinner() { spinning="$1"; }
+            stop_inline_spinner() { [[ -z "$spinning" ]] || echo "STOP"; spinning=""; }
+            stop_section_spinner() { stop_inline_spinner; }
+            get_path_size_kb() { echo "SIZE_WHILE:${spinning:-none}" >&2; echo 4; }
+            clean_project_caches
+            echo "AFTER:${spinning:-none}"
+        ' < /dev/null > /dev/null 2>&1
+
+    local content
+    content=$(tr -d '\r' < "$raw")
+    rm -rf "$HOME/Projects" "$raw"
+    [[ "$content" == *"SIZE_WHILE:Checking project caches..."* ]] || { echo "$content"; return 1; }
+    [[ "$content" == *"SIZE_WHILE:Checking project caches..."*"STOP"*"Python bytecode cache · python-app"* ]] || { echo "$content"; return 1; }
+    [[ "$content" == *"AFTER:none"* ]] || { echo "$content"; return 1; }
+}
+
 @test "clean_project_caches skips empty pycache directories" {
     mkdir -p "$HOME/Projects/python-app/pkg/__pycache__"
     mkdir -p "$HOME/Projects/python-app/empty/__pycache__"

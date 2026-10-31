@@ -1197,6 +1197,11 @@ _safe_clean_impl() {
         if [[ "$DRY_RUN" != "true" && ${#existing_paths[@]} -gt 0 && -t 1 ]]; then
             start_section_spinner "Cleaning..."
             cleaning_spinner_started=true
+        elif [[ -n "$delete_guard" && -t 1 ]]; then
+            # The preview still asks the owner guard about every item, about
+            # 70ms each, which left VS Code logs silent for 0.7s.
+            start_section_spinner "Checking ${description}..."
+            cleaning_spinner_started=true
         fi
         idx=0
         if [[ ${#existing_paths[@]} -gt 0 ]]; then
@@ -1885,7 +1890,10 @@ perform_cleanup() {
     echo ""
 
     if [[ "$DRY_RUN" == "true" ]]; then
+        # Writing the detailed list took 0.8s for 267 items with nothing on screen.
+        if [[ -t 1 ]]; then start_section_spinner "Preparing summary..."; fi
         render_clean_preview_from_ledger
+        stop_section_spinner
     fi
 
     local summary_heading=""
