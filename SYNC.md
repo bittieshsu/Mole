@@ -104,7 +104,7 @@ Verification for the 2026-10-15 review fixes: `make build`, `go test ./...`, `./
 
 Source: Mole CLI (macOS) `main` (this entry's commits). `prune_stale_mole_tmpdir_leftovers` now lists the Darwin temp root once, as one tagged `find` whose names never return to a command line, and leaves `mole.prune-stamp` there after a complete pass so the next listing waits a day (`mo --version` 1.89s to 0.15s on a root of 126,196 entries). The candidate rules are unchanged. The clean output changes (owner-command rows count measured bytes, 0B rows hidden, review rows link their label and state one fact, two-line summary) are CLI presentation only.
 
-- Pending: Mole Mac's `TemporaryRootLeftoverPolicy` holds the same candidate contract (`.claude/rules/core.md`). Next check: whether its scan runs often enough on a large root to need the same once-a-day stamp, and if so, honor the CLI's `mole.prune-stamp` rather than writing its own, so one listing a day serves both. The stamp name matches neither candidate pattern, so the current Mole Mac policy leaves it alone.
+- Not applicable (checked 2026-10-31 against Mole Mac `main`): `TemporaryRootLeftoverPolicy` holds the same candidate contract (`.claude/rules/core.md`), but Mole Mac lists the root only inside a Clean scan the user started (`CacheScanner.temporaryRootLeftoverItems`, async under `metadataWalkTimeout`), not at every launch, so it never paid the per-command cost the stamp removes; a once-a-day stamp there would hide leftovers from a scan the user asked for. The stamp name matches neither candidate pattern, so the current Mole Mac policy leaves it alone.
 - Not applicable: the clean row wording and summary box; Mole Mac renders its own UI.
 
 ## 2026-10-31 Mole Mac safety follow-up
