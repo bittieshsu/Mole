@@ -937,14 +937,68 @@ EOF
 @test "clean_design_tools calls expected caches" {
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/app_caches.sh"
 safe_clean() { echo "$2"; }
+pgrep() { return 1; }
 clean_design_tools
 EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Sketch cache"* ]] || return 1
     [[ "$output" == *"Figma cache"* ]]
+}
+
+# Adobe's video apps read and write Common/Media Cache Files while open, and
+# their bundle names carry a year. Each holder in the list must keep the row;
+# an unrelated Adobe app must not, and the sibling Media Cache database is
+# never a target.
+@test "clean_design_tools holds Adobe media cache files while an Adobe video app runs" {
+    mkdir -p "$HOME/Library/Application Support/Adobe/Common/Media Cache Files" \
+        "$HOME/Library/Application Support/Adobe/Common/Media Cache"
+    touch "$HOME/Library/Application Support/Adobe/Common/Media Cache Files/peak.pek" \
+        "$HOME/Library/Application Support/Adobe/Common/Media Cache/Media Cache Database.db"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/app_caches.sh"
+safe_clean() { echo "SAFE_CLEAN:${!#}|$*"; }
+defer_cleanup_family() { echo "DEFER:$1"; }
+note_activity() { :; }
+FAKE_PROCESS=""
+pgrep() {
+    [[ "$1" == "-f" ]] || return 1
+    [[ -n "$FAKE_PROCESS" ]] || return 1
+    printf '%s\n' "$FAKE_PROCESS" | grep -Eq -- "$2"
+}
+holders=(
+    "/Applications/Adobe Premiere Pro 2025/Adobe Premiere Pro 2025.app/Contents/MacOS/Adobe Premiere Pro 2025"
+    "/Applications/Adobe After Effects 2025/Adobe After Effects 2025.app/Contents/MacOS/After Effects"
+    "/Applications/Adobe Media Encoder 2025/Adobe Media Encoder 2025.app/Contents/MacOS/Adobe Media Encoder 2025"
+    "/Applications/Adobe Audition 2025/Adobe Audition 2025.app/Contents/MacOS/Adobe Audition 2025"
+    "/Applications/Adobe Prelude 2022/Adobe Prelude 2022.app/Contents/MacOS/Adobe Prelude 2022"
+    "/Applications/Adobe Character Animator 2025/Adobe Character Animator 2025.app/Contents/MacOS/Character Animator"
+    "/Applications/Adobe Premiere Elements 2024/Adobe Premiere Elements 2024.app/Contents/MacOS/Adobe Premiere Elements 2024"
+    "/Applications/Adobe Premiere Rush.app/Contents/MacOS/Adobe Premiere Rush"
+)
+for FAKE_PROCESS in "${holders[@]}"; do
+    out=$(clean_design_tools)
+    if [[ "$out" == *"SAFE_CLEAN:Adobe media cache files"* || "$out" != *"DEFER:Adobe"* ]]; then
+        echo "NOT_HELD|$FAKE_PROCESS"
+    fi
+done
+FAKE_PROCESS="/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app/Contents/MacOS/Adobe Photoshop 2025"
+clean_design_tools
+EOF
+    rm -rf "$HOME/Library/Application Support/Adobe"
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" != *"NOT_HELD|"* ]] || { echo "$output"; return 1; }
+    # Control: with only Photoshop open the row still reaches its cleaner.
+    [[ "$output" == *"SAFE_CLEAN:Adobe media cache files|$HOME/Library/Application Support/Adobe/Common/Media Cache Files/peak.pek"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"Media Cache Database.db"* ]] || return 1
+    [[ "$output" != *"/Common/Media Cache/"* ]]
 }
 
 @test "clean_dingtalk calls expected caches" {

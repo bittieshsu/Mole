@@ -1162,6 +1162,16 @@ clean_ai_apps() {
         debug_log "Codex Desktop state left intact by default"
     fi
 }
+# Adobe's video apps share Common/Media Cache Files (conformed audio and peak
+# files) and index it from the sibling Media Cache database, which stays
+# untouched. Any of them running can be reading or writing the files, and
+# bundle names carry a year ("Adobe Premiere Pro 2025.app"), so match the
+# bundle path rather than an exact executable name.
+_adobe_media_cache_running() {
+    mole_pgrep_any \
+        -f '/Adobe (Premiere Pro|After Effects|Media Encoder|Audition|Prelude|Character Animator|Premiere Elements|Premiere Rush)[^/]*[.]app/'
+}
+
 # Design and creative tools.
 clean_design_tools() {
     safe_clean ~/Library/Caches/com.bohemiancoding.sketch3/* "Sketch cache"
@@ -1169,7 +1179,10 @@ clean_design_tools() {
     safe_clean ~/Library/Caches/Adobe/* "Adobe cache"
     safe_clean ~/Library/Caches/com.adobe.*/* "Adobe app caches"
     safe_clean ~/Library/Caches/com.figma.Desktop/* "Figma cache"
-    safe_clean ~/Library/Application\ Support/Adobe/Common/Media\ Cache\ Files/* "Adobe media cache files"
+    local adobe_media_rc=0
+    _dev_safe_clean_process_guarded _adobe_media_cache_running "Adobe" "Adobe media cache files" \
+        ~/Library/Application\ Support/Adobe/Common/Media\ Cache\ Files/* "Adobe media cache files" || adobe_media_rc=$?
+    [[ $adobe_media_rc -le 1 ]] || return "$adobe_media_rc"
 }
 # Video editing tools.
 jianying_pro_is_running() {
