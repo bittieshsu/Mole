@@ -5100,3 +5100,141 @@ EOF
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
     [[ "$output" == *CONDA_ROOT_GUARD_OK* ]] || return 1
 }
+
+@test "owner cache rows show and count only the bytes their command removed" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+DRY_RUN=false
+MOLE_CURRENT_COMMAND=clean
+MOLE_CLEAN_CANCEL_STATUS=0
+files_cleaned=0 total_size_cleaned=0 total_items=0
+note_activity() { :; }
+get_cleanup_path_size_kb() { /usr/bin/du -sk "$1" | /usr/bin/cut -f1; }
+root="$HOME/.cache/owner-fixture"
+mkdir -p "$root/keep"
+/bin/dd if=/dev/zero of="$root/drop.bin" bs=1024 count=2048 2> /dev/null
+/bin/dd if=/dev/zero of="$root/keep/stay.bin" bs=1024 count=512 2> /dev/null
+prune() { /bin/rm -f "$root/drop.bin"; } # SAFE: test fixture
+clean_tool_cache "Fixture cache" "$root" prune
+printf 'TOTAL=%s ITEMS=%s\n' "$total_size_cleaned" "$total_items"
+noop() { :; }
+clean_tool_cache "Unchanged cache" "$root" noop
+printf 'TOTAL=%s ITEMS=%s\n' "$total_size_cleaned" "$total_items"
+reset() { /bin/rm -rf "$root"; } # SAFE: test fixture
+clean_tool_cache "Reset cache" "$root" reset
+printf 'TOTAL=%s ITEMS=%s\n' "$total_size_cleaned" "$total_items"
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" =~ "Fixture cache · "[^$'\n']*"2."[0-9]+"MB" ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"TOTAL=2048 ITEMS=1"* ]] || { echo "$output"; return 1; }
+    local unchanged
+    unchanged=$(printf '%s\n' "$output" | grep 'Unchanged cache')
+    [[ "$unchanged" != *"·"* ]] || { echo "$output"; return 1; }
+    [[ "$output" =~ "Reset cache · " ]] || { echo "$output"; return 1; }
+    [[ "$output" =~ TOTAL=([0-9]+)\ ITEMS=2$ ]] || { echo "$output"; return 1; }
+    [ "${BASH_REMATCH[1]}" -gt 2048 ]
+}
+
+@test "an interrupt while measuring an owner cache stops before the owner command" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+DRY_RUN=false
+MOLE_CURRENT_COMMAND=clean
+MOLE_CLEAN_CANCEL_STATUS=0
+note_activity() { :; }
+get_cleanup_path_size_kb() { return 130; }
+mkdir -p "$HOME/.cache/owner-fixture"
+owner() { echo UNEXPECTED_OWNER; }
+rc=0
+clean_tool_cache "Fixture cache" "$HOME/.cache/owner-fixture" owner || rc=$?
+printf 'RC=%s CANCEL=%s\n' "$rc" "$MOLE_CLEAN_CANCEL_STATUS"
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" != *UNEXPECTED_OWNER* ]] || return 1
+    [[ "$output" == *"RC=130 CANCEL=130"* ]]
+}
+
+@test "an interrupt while measuring an owner cache after its command stops later owners" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+DRY_RUN=false
+MOLE_CURRENT_COMMAND=clean
+MOLE_CLEAN_CANCEL_STATUS=0
+note_activity() { :; }
+measured=0
+get_cleanup_path_size_kb() {
+    measured=$((measured + 1))
+    [[ -f "$HOME/owner-ran" ]] && return 130
+    echo 100
+}
+mkdir -p "$HOME/.cache/owner-after"
+owner() { : > "$HOME/owner-ran"; }
+later() { echo UNEXPECTED_LATER; }
+rc=0
+_run_developer_cleanup_step clean_tool_cache "Fixture cache" "$HOME/.cache/owner-after" owner || rc=$?
+[[ $rc -ne 0 ]] || _run_developer_cleanup_step clean_tool_cache "Later cache" "" later || true
+printf 'RC=%s CANCEL=%s\n' "$rc" "$MOLE_CLEAN_CANCEL_STATUS"
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" != *UNEXPECTED_LATER* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"RC=130 CANCEL=130"* ]] || { echo "$output"; return 1; }
+}
+
+@test "clean_dev_go stops when measuring a cleaned Go cache is interrupted" {
+    local module_root="$HOME/go-module-after"
+    local build_root="$HOME/go-build-after"
+    mkdir -p "$module_root" "$build_root"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" \
+        GO_MODULE_ROOT="$module_root" GO_BUILD_ROOT="$build_root" \
+        /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+DRY_RUN=false
+MOLE_CURRENT_COMMAND=clean
+MOLE_CLEAN_CANCEL_STATUS=0
+go() { :; }
+run_with_timeout() {
+    shift
+    if [[ "$1" == "go" && "$2" == "env" ]]; then
+        if [[ "$3" == "GOMODCACHE" ]]; then
+            printf '%s\n' "$GO_MODULE_ROOT"
+        else
+            printf '%s\n' "$GO_BUILD_ROOT"
+        fi
+        return 0
+    fi
+    printf '%s\n' "$*" >> "$HOME/go-ran"
+    : > "$HOME/go-cleaned"
+    return 0
+}
+# Only the first measurement after a command is interrupted, so a run that
+# swallowed it would go on to measure and clean the second cache.
+get_cleanup_path_size_kb() {
+    if [[ -f "$HOME/go-cleaned" && ! -f "$HOME/go-interrupted" ]]; then
+        : > "$HOME/go-interrupted"
+        return 130
+    fi
+    echo 100
+}
+is_path_whitelisted() { return 1; }
+should_protect_path() { return 1; }
+go_cache_process_state() { return 1; }
+note_activity() { :; }
+clean_rc=0
+clean_dev_go || clean_rc=$?
+printf 'rc=%s CANCEL=%s\n' "$clean_rc" "${MOLE_CLEAN_CANCEL_STATUS:-0}"
+printf 'RAN=%s\n' "$(wc -l < "$HOME/go-ran" | tr -d ' ')"
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"rc=130 CANCEL=130"* ]] || { echo "$output"; return 1; }
+    # The first cache's command ran; the interrupt stops the second one.
+    [[ "$output" == *"RAN=1"* ]] || { echo "$output"; return 1; }
+}

@@ -32,6 +32,22 @@ owner_cache_root_is_safe() {
 #   $3+ = command to run
 # Returns the signal status when the owner command was interrupted, or the
 # pending clean cancellation without running anything; callers propagate it.
+# Size of an owner cache root for the before/after row total. Prints nothing
+# and fails for a root outside HOME, a link, a missing folder or a sizing
+# timeout, so the row falls back to no size instead of a guessed one.
+_owner_cache_size_kb() {
+    local root="$1"
+    [[ -n "$root" && "$root" == "$HOME"/* && -d "$root" && ! -L "$root" ]] || return 1
+    declare -f get_cleanup_path_size_kb > /dev/null 2>&1 || return 1
+    local size_kb="" size_rc=0
+    size_kb=$(get_cleanup_path_size_kb "$root" 2> /dev/null) || size_rc=$?
+    # An interrupt while measuring is handed back so no owner command starts.
+    mole_rc_signal "$size_rc" && return "$size_rc"
+    [[ $size_rc -eq 0 ]] || return 1
+    [[ "$size_kb" =~ ^[0-9]+$ ]] || return 1
+    echo "$size_kb"
+}
+
 clean_tool_cache() {
     local description="$1"
     local cache_path="$2"
@@ -70,17 +86,52 @@ clean_tool_cache() {
         if [[ -t 1 ]]; then
             start_section_spinner "Cleaning $description..."
         fi
+        # The owner command reports nothing Mole can parse, so the row measures
+        # its root before and after and counts only what disappeared. Roots
+        # outside HOME (the Nix store) are too large to walk twice.
+        local size_before_kb="" size_rc=0
+        if [[ "${1:-}" != ":" ]]; then
+            size_before_kb=$(_owner_cache_size_kb "$cache_path") || size_rc=$?
+        fi
+        if mole_rc_signal "$size_rc"; then
+            [[ -t 1 ]] && stop_section_spinner
+            _mole_record_clean_cancellation "$size_rc" "$description"
+            return "$size_rc"
+        fi
+        [[ $size_rc -eq 0 ]] || size_before_kb=""
         "$@" > /dev/null 2>&1 || command_rc=$?
+        local freed_kb=0 after_rc=0
+        if [[ $command_rc -eq 0 && -n "$size_before_kb" ]]; then
+            local size_after_kb=0
+            if [[ -e "$cache_path" ]]; then
+                size_after_kb=$(_owner_cache_size_kb "$cache_path") || after_rc=$?
+                [[ $after_rc -eq 0 ]] || size_after_kb=""
+            fi
+            if [[ -n "$size_after_kb" ]] && ((size_before_kb > size_after_kb)); then
+                freed_kb=$((size_before_kb - size_after_kb))
+            fi
+        fi
         if [[ -t 1 ]]; then
             stop_section_spinner
         fi
         if [[ $command_rc -eq 0 ]]; then
-            echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $description"
+            if ((freed_kb > 0)); then
+                echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $description · $(colorize_human_size "$(bytes_to_human_kb "$freed_kb")")"
+                mole_add_cleaned_row 0 "$freed_kb"
+            else
+                echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $description"
+            fi
             note_activity
             # The owner command changed the Mac, so it gets an operations.log
             # row like every other sink. A ":" placeholder changed nothing.
             if [[ "${1:-}" != ":" ]]; then
                 log_operation "${MOLE_CURRENT_COMMAND:-clean}" "REMOVED" "${cache_path:-$description}" "owner command: $description"
+            fi
+            # Ctrl-C while measuring the result reaches only the measuring
+            # child; the command already ran, so record it, then stop.
+            if mole_rc_signal "$after_rc"; then
+                _mole_record_clean_cancellation "$after_rc" "$description"
+                return "$after_rc"
             fi
         elif ! mole_rc_signal "$command_rc"; then
             # Routine owner failures stay in diagnostics, without a success
@@ -1084,14 +1135,34 @@ clean_go_cache_root() {
 
     local _MOLE_GO_CACHE_BOUND_REASON=""
     local command_status=0
-    if [[ "$DRY_RUN" != "true" && -t 1 ]]; then
-        start_section_spinner "Cleaning $display_name..."
+    local size_before_kb="" size_rc=0 freed_kb=0
+    if [[ "$DRY_RUN" != "true" ]]; then
+        [[ -t 1 ]] && start_section_spinner "Cleaning $display_name..."
+        # Same before/after measurement as clean_tool_cache.
+        size_before_kb=$(_owner_cache_size_kb "$cache_root") || size_rc=$?
+        if mole_rc_signal "$size_rc"; then
+            [[ -t 1 ]] && stop_section_spinner
+            _mole_record_clean_cancellation "$size_rc" "$display_name"
+            return "$size_rc"
+        fi
+        [[ $size_rc -eq 0 ]] || size_before_kb=""
     fi
     _run_go_cache_clean_bound \
         "$cache_root" "$physical_root" \
         "$lexical_parent" "$lexical_parent_id" "$lexical_target_id" \
         "$physical_parent" "$physical_parent_id" "$physical_target_id" \
         "$cache_kind" "$clean_flag" "$DRY_RUN" || command_status=$?
+    local after_rc=0
+    if [[ "$DRY_RUN" != "true" && $command_status -eq 0 && -n "$size_before_kb" ]]; then
+        local size_after_kb=0
+        if [[ -e "$cache_root" ]]; then
+            size_after_kb=$(_owner_cache_size_kb "$cache_root") || after_rc=$?
+            [[ $after_rc -eq 0 ]] || size_after_kb=""
+        fi
+        if [[ -n "$size_after_kb" ]] && ((size_before_kb > size_after_kb)); then
+            freed_kb=$((size_before_kb - size_after_kb))
+        fi
+    fi
     if [[ "$DRY_RUN" != "true" && -t 1 ]]; then
         stop_section_spinner
     fi
@@ -1099,10 +1170,17 @@ clean_go_cache_root() {
     if [[ $command_status -eq 0 ]]; then
         if [[ "$DRY_RUN" == "true" ]]; then
             echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} $display_name · would clean"
+        elif ((freed_kb > 0)); then
+            echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $display_name · $(colorize_human_size "$(bytes_to_human_kb "$freed_kb")")"
+            mole_add_cleaned_row 0 "$freed_kb"
         else
             echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $display_name"
         fi
         note_activity
+        if mole_rc_signal "$after_rc"; then
+            _mole_record_clean_cancellation "$after_rc" "$display_name"
+            return "$after_rc"
+        fi
         return 0
     fi
     if mole_rc_timeout "$command_status"; then
