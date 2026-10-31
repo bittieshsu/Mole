@@ -717,7 +717,10 @@ clean_dev_npm() {
     note_activity
     safe_clean ~/.tnpm/_cacache/* "tnpm cache directory"
     safe_clean ~/.tnpm/_logs/* "tnpm logs"
-    safe_clean ~/.yarn/cache/* "Yarn cache"
+    # Yarn Berry keeps .yarn/cache inside each project and its shared global
+    # cache in ~/.yarn/berry/cache; ~/.yarn/cache is never written. Yarn
+    # Classic on macOS uses ~/Library/Caches/Yarn.
+    safe_clean ~/.yarn/berry/cache/* "Yarn Berry cache"
     safe_clean ~/Library/Caches/Yarn/* "Yarn v1 cache"
 }
 # Resolve a cache root to its physical location and prove that it remains a

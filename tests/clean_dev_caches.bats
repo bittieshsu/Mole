@@ -682,6 +682,31 @@ EOF
     [[ "$output" == *"npm prebuilds|$HOME/.npm/_prebuilds/*"* ]]
 }
 
+# Yarn Berry writes .yarn/cache inside each project and its global cache in
+# ~/.yarn/berry/cache; ~/.yarn/cache was a row that never held anything.
+@test "clean_dev_npm cleans the Yarn Berry global cache, not the unused ~/.yarn/cache" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/dev.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+clean_tool_cache() { :; }
+clean_pnpm_stores() { :; }
+clean_corepack_cache() { :; }
+clean_bun_cache() { :; }
+safe_clean() { echo "$2|$1"; }
+note_activity() { :; }
+npm() { return 1; }
+clean_dev_npm
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"Yarn Berry cache|$HOME/.yarn/berry/cache/*"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"Yarn v1 cache|$HOME/Library/Caches/Yarn/*"* ]] || { echo "$output"; return 1; }
+    [[ "$output" != *"|$HOME/.yarn/cache/"* ]]
+}
+
 @test "clean_dev_jvm never enters daemon cleanup while Gradle is running" {
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail

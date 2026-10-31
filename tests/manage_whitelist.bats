@@ -849,11 +849,11 @@ EOF
     local test_home="$HOME/rows-delete-paths"
     rm -rf "$test_home"
     mkdir -p "$test_home/Library/Caches/pip/http" \
-        "$test_home/.yarn/cache" "$test_home/Library/Caches/Yarn/v6" \
+        "$test_home/.yarn/berry/cache" "$test_home/Library/Caches/Yarn/v6" \
         "$test_home/.gem/specs" "$test_home/.gem/ruby/3.2.0/cache" \
         "$test_home/.local/share/containers/storage/tmp"
     touch "$test_home/Library/Caches/pip/http/a" \
-        "$test_home/.yarn/cache/a.zip" "$test_home/Library/Caches/Yarn/v6/a" \
+        "$test_home/.yarn/berry/cache/a.zip" "$test_home/Library/Caches/Yarn/v6/a" \
         "$test_home/.gem/specs/a" "$test_home/.gem/ruby/3.2.0/cache/a.gem" \
         "$test_home/.local/share/containers/storage/tmp/a"
 
@@ -916,7 +916,7 @@ pattern_for_row() {
 
 rows=(
     "pip Python package cache|pip cache"
-    "Yarn package manager cache|Yarn cache"
+    "Yarn Berry package cache|Yarn Berry cache"
     "Yarn v1 package cache|Yarn v1 cache"
     "RubyGems package cache|gem package cache"
     "RubyGems spec cache|gem spec cache"
@@ -976,7 +976,7 @@ EOF
     local dead
     # shellcheck disable=SC2016  # Literal $HOME spellings, as the inventory prints them.
     for dead in \
-        '$HOME/.cache/pip/' '$HOME/.cache/yarn/' '$HOME/.gem/cache/' \
+        '$HOME/.cache/pip/' '$HOME/.cache/yarn/' '$HOME/.yarn/cache/' '$HOME/.gem/cache/' \
         '$HOME/.local/share/containers/cache/' \
         '$HOME/.rustup/toolchains/' '$HOME/.ccache/' '$HOME/.cache/sccache/' \
         '$HOME/.cache/flutter/' '$HOME/.cache/selenium/' '$HOME/.ollama/'; do
@@ -987,7 +987,7 @@ EOF
     # shellcheck disable=SC2016  # Literal $HOME spelling, as the inventory prints it.
     [[ "$output" == *'|$HOME/Library/Caches/pip/*|'* ]] || return 1
     # shellcheck disable=SC2016  # Literal $HOME spelling, as the inventory prints it.
-    [[ "$output" == *'|$HOME/.yarn/cache/*|'* ]] || return 1
+    [[ "$output" == *'|$HOME/.yarn/berry/cache/*|'* ]] || return 1
 }
 
 # The Toolbox cleaner only strips whitelist patterns that start at its own apps
