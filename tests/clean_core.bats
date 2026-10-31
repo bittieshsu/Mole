@@ -173,6 +173,75 @@ EOF
     rm -rf "$base"
 }
 
+@test "safe_clean removes a 0B target without printing a row for it" {
+    local base="$HOME/safe_clean_zero"
+    mkdir -p "$base/empty" "$base/full"
+    : > "$base/empty/zero"
+    printf 'xxxx' > "$base/full/data"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 /bin/bash --noprofile --norc << EOF
+set -euo pipefail
+source "\$PROJECT_ROOT/lib/core/common.sh"
+source "\$PROJECT_ROOT/bin/clean.sh"
+DRY_RUN=false
+files_cleaned=0
+total_size_cleaned=0
+total_items=0
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+start_inline_spinner() { :; }
+stop_inline_spinner() { :; }
+note_activity() { echo ACTIVITY; }
+is_path_whitelisted() { return 1; }
+safe_remove() { /bin/rm -rf "\$1"; return 0; } # SAFE: test fixture
+safe_clean "$base/empty" "Empty cache"
+safe_clean "$base/full" "Full cache"
+echo "FILES=\$files_cleaned"
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" != *"Empty cache"* ]] || return 1
+    [[ "$output" == *"Full cache"* ]] || return 1
+    [ "$(printf '%s\n' "$output" | grep -c '^ACTIVITY$')" -eq 1 ] || return 1
+    [[ "$output" == *"FILES=2"* ]] || return 1
+    [[ ! -e "$base/empty" && ! -e "$base/full" ]] || return 1
+    rm -rf "$base"
+}
+
+@test "safe_clean keeps the row when a size could not be read" {
+    local base="$HOME/safe_clean_unsized"
+    mkdir -p "$base/one" "$base/two"
+    printf 'xxxx' > "$base/one/data"
+    printf 'xxxx' > "$base/two/data"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=1 /bin/bash --noprofile --norc << EOF
+set -euo pipefail
+source "\$PROJECT_ROOT/lib/core/common.sh"
+source "\$PROJECT_ROOT/bin/clean.sh"
+DRY_RUN=false
+files_cleaned=0
+total_size_cleaned=0
+total_items=0
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+start_inline_spinner() { :; }
+stop_inline_spinner() { :; }
+note_activity() { :; }
+is_path_whitelisted() { return 1; }
+# A sizing failure that is neither a timeout nor a signal reads as 0.
+get_cleanup_path_size_kb() { return 1; }
+_cleanup_path_sizes_kb() { return 1; }
+safe_remove() { /bin/rm -rf "\$1"; return 0; } # SAFE: test fixture
+safe_clean "$base/one" "Unsized single"
+safe_clean "$base/two"/* "Unsized batch"
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"Unsized single"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"Unsized batch"* ]] || { echo "$output"; return 1; }
+    rm -rf "$base"
+}
+
 @test "safe_clean colors a real cleanup size by unit like the dry-run preview" {
     local base="$HOME/safe_clean_color"
     mkdir -p "$base"
@@ -1107,7 +1176,7 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Free space: 75.16GB"* ]] || return 1
-    [[ "$output" == *"Tracked cleanup:"* ]] || return 1
+    [[ "$output" == *"Removed:"* ]] || return 1
     [[ "$output" == *"1.02GB"* ]] || return 1
     [[ "$output" == *"Free space: 76.19GB (+1.02GB)"* ]] || return 1
     [[ "$output" != *"Space freed:"* ]] || return 1
@@ -1232,9 +1301,10 @@ PLIST
     [[ -n "$preview_total" && "$preview_items" =~ ^[0-9]+$ && "$preview_categories" =~ ^[0-9]+$ ]] || return 1
     [[ "$output" != *"Category total"* ]] || return 1
     printf '%s\n' "$output" | grep -F "Potential space:" |
-        grep -F "Items: $preview_items" |
-        grep -F "Categories: $preview_categories" |
+        grep -E " · $preview_items items?\b" |
         grep -qF "$preview_total" || return 1
+    # The box keeps two lines: the total and the file list.
+    [[ "$output" != *"Categories:"* && "$output" != *"add protection rules"* ]] || return 1
 }
 
 @test "dry-run ledger keeps shell-timeout child candidates and unknown sizes" {

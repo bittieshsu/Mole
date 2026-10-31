@@ -95,14 +95,16 @@ EOF
 }
 
 @test "check_android_ndk reports multiple NDK versions" {
-    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/Library/Android/sdk/ndk"/{21.0.1,22.0.0,20.0.0} && source "$0" && note_activity() { :; } && NC="" && GREEN="" && GRAY="" && YELLOW="" && ICON_REVIEW="⊙" && check_android_ndk' "$PROJECT_ROOT/lib/clean/dev.sh"
+    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/Library/Android/sdk/ndk"/{21.0.1,22.0.0,20.0.0} && source "${0%/clean/dev.sh}/core/common.sh" && source "$0" && note_activity() { :; } && check_android_ndk' "$PROJECT_ROOT/lib/clean/dev.sh"
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Android NDK versions · 3 found"* ]]
+    local plain
+    plain=$(printf '%s' "$output" | sed $'s/\033\\[[0-9;]*m//g')
+    [[ "$plain" == *"Android NDK versions · 3 · 20.0.0 and 21.0.1 besides 22.0.0"* ]] || { echo "$plain"; return 1; }
 }
 
 @test "check_android_ndk silent when only one NDK" {
-    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/Library/Android/sdk/ndk/22.0.0" && source "$0" && note_activity() { :; } && NC="" && GREEN="" && GRAY="" && YELLOW="" && ICON_REVIEW="⊙" && check_android_ndk' "$PROJECT_ROOT/lib/clean/dev.sh"
+    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/Library/Android/sdk/ndk/22.0.0" && source "${0%/clean/dev.sh}/core/common.sh" && source "$0" && note_activity() { :; } && check_android_ndk' "$PROJECT_ROOT/lib/clean/dev.sh"
 
     [ "$status" -eq 0 ]
     [[ "$output" != *"NDK versions"* ]]
@@ -1613,7 +1615,8 @@ EOF
 @test "clean_xcode_xctest_devices dry-run keeps XCTestDevices directory" {
     local xctest_root="$HOME/Library/Developer/XCTestDevices"
     mkdir -p "$xctest_root"
-    touch "$xctest_root/test-device"
+    # A 0B target removes silently, so the preview row needs real bytes.
+    printf 'device' > "$xctest_root/test-device"
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
@@ -1679,14 +1682,16 @@ EOF
 }
 
 @test "check_rust_toolchains reports multiple toolchains" {
-    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/.rustup/toolchains"/{stable,nightly,1.75.0}-aarch64-apple-darwin && source "$0" && note_activity() { :; } && NC="" && GREEN="" && GRAY="" && YELLOW="" && ICON_REVIEW="⊙" && rustup() { :; } && export -f rustup && check_rust_toolchains' "$PROJECT_ROOT/lib/clean/dev.sh"
+    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/.rustup/toolchains"/{stable,nightly,1.75.0}-aarch64-apple-darwin && printf "default_toolchain = \"stable-aarch64-apple-darwin\"\n" > "$HOME/.rustup/settings.toml" && source "${0%/clean/dev.sh}/core/common.sh" && source "$0" && note_activity() { :; } && rustup() { :; } && export -f rustup && check_rust_toolchains' "$PROJECT_ROOT/lib/clean/dev.sh"
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Rust toolchains · 3 found"* ]]
+    local plain
+    plain=$(printf '%s' "$output" | sed $'s/\033\\[[0-9;]*m//g')
+    [[ "$plain" == *"Rust toolchains · 3 · 1.75.0 and nightly besides stable"* ]] || { echo "$plain"; return 1; }
 }
 
 @test "check_rust_toolchains silent when only one toolchain" {
-    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin" && source "$0" && note_activity() { :; } && NC="" && GREEN="" && GRAY="" && YELLOW="" && ICON_REVIEW="⊙" && rustup() { :; } && export -f rustup && check_rust_toolchains' "$PROJECT_ROOT/lib/clean/dev.sh"
+    run /bin/bash -c 'HOME=$(mktemp -d) && mkdir -p "$HOME/.rustup/toolchains/stable-aarch64-apple-darwin" && source "${0%/clean/dev.sh}/core/common.sh" && source "$0" && note_activity() { :; } && rustup() { :; } && export -f rustup && check_rust_toolchains' "$PROJECT_ROOT/lib/clean/dev.sh"
 
     [ "$status" -eq 0 ]
     [[ "$output" != *"Rust toolchains"* ]]

@@ -1451,13 +1451,31 @@ clean_dev_perl() {
     safe_clean ~/.cpan/build/* "CPAN build artifacts"
 }
 
-# Helper: Check for multiple versions in a directory.
-# Args: $1=directory, $2=tool_name, $3=list_command, $4=remove_command
+# Version folder names other than the one in use, host triple dropped
+# ("nightly and 1.95.0"), so the row names the candidates by itself.
+# Prints nothing when nothing besides the kept version is installed.
+_version_dirs_besides() {
+    local dir="$1" keep="${2:-}"
+    local -a others=()
+    local entry name
+    for entry in "$dir"/*; do
+        [[ -d "$entry" && ! -L "$entry" ]] || continue
+        name="${entry##*/}"
+        name="${name%-aarch64-apple-darwin}"
+        name="${name%-x86_64-apple-darwin}"
+        [[ "$name" == "$keep" ]] && continue
+        others+=("$name")
+    done
+    [[ ${#others[@]} -gt 0 ]] || return 0
+    mole_join_names "${others[@]}"
+}
+
+# Helper: report a folder holding several installed versions.
+# Args: $1=directory, $2=row label, $3=version kept in use (may be empty)
 check_multiple_versions() {
     local dir="$1"
     local tool_name="$2"
-    local list_cmd="${3:-}"
-    local remove_cmd="${4:-}"
+    local keep="${3:-}"
 
     if [[ ! -d "$dir" ]]; then
         return 0
@@ -1468,11 +1486,12 @@ check_multiple_versions() {
 
     if [[ "$count" -gt 1 ]]; then
         note_activity
-        local hint=""
-        if [[ -n "$list_cmd" ]]; then
-            hint=" ${GRAY}(${list_cmd})${NC}"
+        local fact=""
+        if [[ -n "$keep" ]]; then
+            fact=$(_version_dirs_besides "$dir" "$keep")
+            [[ -n "$fact" ]] && fact+=" besides $keep"
         fi
-        echo -e "  ${YELLOW}${ICON_REVIEW}${NC} ${tool_name} · ${count} found${hint}"
+        mole_review_row "$tool_name" "$dir" "$count" "$fact"
     fi
 }
 
@@ -1483,10 +1502,20 @@ check_rust_toolchains() {
     local rustup_home
     rustup_home=$(resolve_tool_home "${RUSTUP_HOME:-}" "${HOME}/.rustup")
 
+    # The default toolchain from rustup's own settings file, read without
+    # running rustup, which may try to sync a toolchain.
+    local default_toolchain=""
+    if [[ -f "${rustup_home}/settings.toml" ]]; then
+        default_toolchain=$(sed -n -E 's/^default_toolchain[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+            "${rustup_home}/settings.toml" 2> /dev/null | head -1) || default_toolchain=""
+        default_toolchain="${default_toolchain%-aarch64-apple-darwin}"
+        default_toolchain="${default_toolchain%-x86_64-apple-darwin}"
+    fi
+
     check_multiple_versions \
         "${rustup_home}/toolchains" \
         "Rust toolchains" \
-        "rustup toolchain list"
+        "$default_toolchain"
 }
 # Docker caches (guarded by daemon check).
 find_orbstack_data_dir() {
@@ -1562,10 +1591,12 @@ clean_dev_frontend() {
 }
 # Check for multiple Android NDK versions.
 check_android_ndk() {
-    check_multiple_versions \
-        "$HOME/Library/Android/sdk/ndk" \
-        "Android NDK versions" \
-        "Android Studio → SDK Manager"
+    local ndk_dir="$HOME/Library/Android/sdk/ndk" newest=""
+    if [[ -d "$ndk_dir" ]]; then
+        newest=$(find "$ndk_dir" -mindepth 1 -maxdepth 1 -type d 2> /dev/null |
+            sed 's#.*/##' | sort -V | tail -1) || newest=""
+    fi
+    check_multiple_versions "$ndk_dir" "Android NDK versions" "$newest"
 }
 
 clean_xcode_documentation_cache() {

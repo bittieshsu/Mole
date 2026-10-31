@@ -217,12 +217,17 @@ clean_xcode_derived_data() {
 
     [[ -d "$dd_dir" ]] || return 0
 
+    # Filtering runs a protection check per project, about a second for 128
+    # projects before the measuring spinner below starts.
+    start_section_spinner "Checking Xcode DerivedData..."
+
     # Count projects before recording an active-process skip, so an empty
     # DerivedData root stays silent.
     local -a projects=()
-    local dir
+    local dir all_count=0
     for dir in "$dd_dir"/*; do
         [[ -d "$dir" ]] || continue
+        all_count=$((all_count + 1))
         if should_protect_path "$dir" || is_path_whitelisted "$dir" || holds_compiled_model_cache "$dir"; then
             continue
         fi
@@ -230,12 +235,16 @@ clean_xcode_derived_data() {
     done
 
     local project_count=${#projects[@]}
-    [[ $project_count -eq 0 ]] && return 0
+    if [[ $project_count -eq 0 ]]; then
+        stop_section_spinner
+        return 0
+    fi
 
     # Only a conclusive "no matching process" result authorizes cleanup.
     local xcode_state=0
     _xcode_cleanup_process_state || xcode_state=$?
     if [[ $xcode_state -ne 1 ]]; then
+        stop_section_spinner
         if [[ $xcode_state -eq 2 ]]; then
             echo -e "  ${GRAY}${ICON_WARNING}${NC} Xcode DerivedData · skipped (process state unknown)"
             note_activity
@@ -300,8 +309,13 @@ clean_xcode_derived_data() {
             [[ $dry_run_count -eq 1 ]] && project_label="project"
             local size_human
             size_human=$(bytes_to_human "$((size_kb * 1024))")
-            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} Xcode DerivedData · ${dry_run_count} ${project_label}, ${size_human}"
+            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} Xcode DerivedData · ${dry_run_count} ${project_label}, $(colorize_human_size "${size_human}") ${YELLOW}dry${NC}"
             note_activity
+            # Large files skips its DerivedData row only when this row holds
+            # every project; a kept or skipped one still needs that row.
+            if [[ -z "$dry_run_stopped_reason" && $dry_run_count -eq $all_count ]]; then
+                _MOLE_DERIVED_DATA_COVERED=true
+            fi
         fi
         if [[ -n "$dry_run_stopped_reason" ]]; then
             if [[ "$dry_run_stopped_reason" == "process state unknown" ]]; then
@@ -368,6 +382,9 @@ clean_xcode_derived_data() {
         echo -e "  ${line_color}${ICON_SUCCESS}${NC} Xcode DerivedData · ${removed} ${project_label}, $(colorize_human_size "${size_human}")"
         mole_add_cleaned_row "$removed" "$removed_size_kb"
         note_activity
+        if [[ -z "$stopped_reason" && $removed -eq $all_count ]]; then
+            _MOLE_DERIVED_DATA_COVERED=true
+        fi
     fi
     if [[ -n "$stopped_reason" ]]; then
         if [[ "$stopped_reason" == "process state unknown" ]]; then
@@ -996,13 +1013,25 @@ _clean_messaging_container_roots() {
 
     local _MOLE_SAFE_REMOVE_FINAL_GUARD="$delete_guard"
     local guarded_rc=0
+    # Roots sharing a label (one web cache per browser profile) clean as one
+    # row, so five profiles read as one "WeChat web cache" line, not five.
+    local done_labels=$'\n' i other_root
+    local -a label_targets=()
     while [[ $# -ge 2 ]]; do
-        cache_root="$1"
         label="$2"
         shift 2
-        [[ -d "$cache_root" && ! -L "$cache_root" ]] || continue
+        [[ "$done_labels" == *$'\n'"$label"$'\n'* ]] && continue
+        done_labels+="$label"$'\n'
+        label_targets=()
+        for ((i = 0; i + 1 < ${#root_pairs[@]}; i += 2)); do
+            [[ "${root_pairs[i + 1]}" == "$label" ]] || continue
+            other_root="${root_pairs[i]}"
+            [[ -d "$other_root" && ! -L "$other_root" ]] || continue
+            label_targets+=("$other_root"/*)
+        done
+        [[ ${#label_targets[@]} -gt 0 ]] || continue
         guarded_rc=0
-        safe_clean_guarded "$delete_guard" "$cache_root"/* "$label" || guarded_rc=$?
+        safe_clean_guarded "$delete_guard" "${label_targets[@]}" "$label" || guarded_rc=$?
         if [[ $guarded_rc -eq 75 ]]; then
             mole_report_guard_stop "$family container caches" \
                 mole_defer_cleanup_family "$family"
@@ -1799,11 +1828,11 @@ clean_autodesk_fusion_old_bundles() {
         local size_human
         size_human=$(bytes_to_human "$((total_size * 1024))")
         if [[ "${DRY_RUN:-false}" == "true" ]]; then
-            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} Autodesk Fusion old versions${NC} · ${YELLOW}${cleaned_count} dirs, $(colorize_human_size "$size_human") ${YELLOW}dry${NC}"
+            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} Autodesk Fusion old versions${NC} · ${YELLOW}$(mole_count_label "${cleaned_count}" dir), $(colorize_human_size "$size_human") ${YELLOW}dry${NC}"
         else
             local line_color
             line_color=$(cleanup_result_color_kb "$total_size")
-            echo -e "  ${line_color}${ICON_SUCCESS}${NC} Autodesk Fusion old versions${NC} · ${line_color}${cleaned_count} dirs, $(colorize_human_size "${size_human}")"
+            echo -e "  ${line_color}${ICON_SUCCESS}${NC} Autodesk Fusion old versions${NC} · ${line_color}$(mole_count_label "${cleaned_count}" dir), $(colorize_human_size "${size_human}")"
         fi
         mole_add_cleaned_row "$cleaned_count" "$total_size"
         note_activity
@@ -2032,11 +2061,11 @@ clean_neatdm_stale_segments() {
         local size_human
         size_human=$(bytes_to_human "$((stale_kb * 1024))")
         if [[ "$DRY_RUN" == "true" ]]; then
-            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} NeatDM stale downloads · ${stale_count} items, $(colorize_human_size "$size_human") ${YELLOW}dry${NC}"
+            echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} NeatDM stale downloads · $(mole_count_label "${stale_count}" item), $(colorize_human_size "$size_human") ${YELLOW}dry${NC}"
         else
             local line_color
             line_color=$(cleanup_result_color_kb "$stale_kb")
-            echo -e "  ${line_color}${ICON_SUCCESS}${NC} NeatDM stale downloads · ${stale_count} items, $(colorize_human_size "${size_human}")"
+            echo -e "  ${line_color}${ICON_SUCCESS}${NC} NeatDM stale downloads · $(mole_count_label "${stale_count}" item), $(colorize_human_size "${size_human}")"
         fi
         mole_add_cleaned_row "$stale_count" "$stale_kb"
         note_activity

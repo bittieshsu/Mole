@@ -348,7 +348,7 @@ perform_cleanup
 EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-    [[ "$output" == *$'Tracked cleanup: \033[0;31m10.74GB\033[0m'* ]]
+    [[ "$output" == *$'Removed: \033[0;31m10.74GB\033[0m'* ]]
 }
 
 @test "partial cleanup keeps routine timeouts out of the default summary" {
@@ -384,7 +384,7 @@ EOF
     local plain_output
     plain_output=$(printf '%s' "$output" | sed -E $'s/\033\\[[0-9;]*m//g')
     [[ "$output" == *"Cleanup complete"* ]] || return 1
-    [[ "$plain_output" == *"Tracked cleanup: 10.74GB+ | Items cleaned: 42"* ]] || return 1
+    [[ "$plain_output" == *"Removed: 10.74GB+ · 42 items"* ]] || return 1
     [[ "$output" == *"RECORDED=1/2"* ]] || return 1
     [[ "$output" == *"Free space:"* ]] || return 1
     [[ "$output" != *"size-check budget"* && "$output" != *"removal budget"* ]] || return 1
@@ -469,7 +469,7 @@ EOF
     [[ "$output" != *"Cleanup cancelled"* ]] || return 1
     local plain_output
     plain_output=$(printf '%s' "$output" | sed -E $'s/\033\\[[0-9;]*m//g')
-    [[ "$plain_output" == *"Tracked cleanup: Partially measured"* ]] || return 1
+    [[ "$plain_output" == *"Removed: Partially measured"* ]] || return 1
     [[ "$output" != *"size-check budget"* ]] || return 1
     [[ "$output" != *"System was already clean"* ]] || return 1
     [[ ! -e "$HOME/Library/Caches/cache1374" ]]

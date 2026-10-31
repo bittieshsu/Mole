@@ -544,8 +544,8 @@ make_devices() {
     for device in A_BOOTS B_OFF; do
         mkdir -p "$devices/$device/data/Library/Caches/com.apple.Maps" \
             "$devices/$device/data/private/var/MobileAsset/AssetsV2/font"
-        touch "$devices/$device/data/Library/Caches/com.apple.Maps/tile" \
-            "$devices/$device/data/private/var/MobileAsset/AssetsV2/font/asset"
+        printf 'tile' > "$devices/$device/data/Library/Caches/com.apple.Maps/tile"
+        printf 'asset' > "$devices/$device/data/private/var/MobileAsset/AssetsV2/font/asset"
         rm -f "$devices/$device/device.plist"
         /usr/bin/plutil -create xml1 "$devices/$device/device.plist"
         /usr/bin/plutil -insert state -integer 1 "$devices/$device/device.plist"
@@ -1151,7 +1151,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/caches.sh"
 source "$PROJECT_ROOT/lib/clean/app_caches.sh"
 safe_clean() { :; }
-safe_clean_guarded() { echo "SCG|$1|$2"; }
+# Roots sharing a label arrive as one call, so print every target.
+safe_clean_guarded() { echo "SCG|$1|${*:2}"; }
 mole_cleanup_targets_exist() { return 0; }
 feishu_or_lark_running() { return 1; }
 clean_service_worker_cache() { echo "SW|$1|$2"; }
@@ -1165,7 +1166,8 @@ EOF
     [[ "$output" != *"iron/users/b6eb487b/profile_explorer"* ]] || return 1
     [[ "$output" != *"IndexedDB"* ]] || return 1
     [[ "$output" == *"SCG|_feishu_disk_cache_delete_guard_allows|$HOME/Library/Caches/LarkShell/iron"* ]] || return 1
-    [[ "$output" == *"SCG|_feishu_disk_cache_delete_guard_allows|$HOME/Library/Containers/com.bytedance.macos.feishu/Data/Library/Caches/LarkShell"* ]]
+    # Both disk caches share one label, so they clean in the same call and row.
+    [[ "$output" == *"SCG|_feishu_disk_cache_delete_guard_allows|$HOME/Library/Caches/LarkShell/iron"*" $HOME/Library/Containers/com.bytedance.macos.feishu/Data/Library/Caches/LarkShell"* ]]
 }
 
 @test "clean_communication_apps leaves Feishu disk caches while Feishu runs" {
@@ -2033,7 +2035,7 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"NeatDM stale downloads"* ]] || return 1
-    [[ "$output" == *"1 items"* ]]
+    [[ "$output" == *"1 item,"* ]]
 }
 
 @test "clean_neatdm_stale_segments skips recent segments" {
@@ -3641,4 +3643,25 @@ for scenario in absent false true string_false integer_zero nested_true empty_ne
 done
 SCRIPT
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "clean_wechat_container_caches cleans every web profile in one row per cache kind" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+profiles="$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/web/profiles"
+for p in one two three; do
+    mkdir -p "$profiles/$p/Cache" "$profiles/$p/Service Worker/CacheStorage"
+    printf 'x' > "$profiles/$p/Cache/entry"
+done
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/app_caches.sh"
+_wechat_container_process_guard_allows() { return 0; }
+mole_cleanup_targets_exist() { return 0; }
+safe_clean_guarded() { echo "SCG|${*: -1}|$(($# - 2))"; }
+clean_wechat_container_caches
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [ "$(printf '%s\n' "$output" | grep -c '^SCG|WeChat web cache|')" -eq 1 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"SCG|WeChat web cache|3"* ]] || { echo "$output"; return 1; }
+    [ "$(printf '%s\n' "$output" | grep -c '^SCG|WeChat service worker cache|')" -eq 1 ] || { echo "$output"; return 1; }
 }

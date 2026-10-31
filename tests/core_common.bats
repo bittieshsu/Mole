@@ -1530,3 +1530,13 @@ printf '%s:%s\n' \"\$rc\" \"\$MOLE_HAS_FDA\"
 
     [ "$output" = "2:unknown" ]
 }
+
+@test "mole_count_label keeps one item singular" {
+    # shellcheck disable=SC2016  # inner bash expands these from its environment
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc -c '
+        source "$PROJECT_ROOT/lib/core/base.sh"
+        printf "%s|%s|%s\n" "$(mole_count_label 1 dir)" "$(mole_count_label 0 item)" "$(mole_count_label 12 item)"
+    '
+    [ "$status" -eq 0 ] || return 1
+    [ "$output" = "1 dir|0 items|12 items" ]
+}

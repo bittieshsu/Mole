@@ -891,7 +891,7 @@ clean_trash
 EOF
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Trash · removed 1 items, 1 could not be removed"* ]] || return 1
+    [[ "$output" == *"Trash · removed 1 item, 1 could not be removed"* ]] || return 1
     [[ -e "$HOME/.Trash/two.tmp" ]] || return 1
     [[ ! -e "$HOME/.Trash/one.tmp" ]]
 }
@@ -3725,7 +3725,7 @@ EOF
         [ -d "$review_home/custom-fvm/versions/3.44.0" ]
 }
 
-@test "large files links the full path behind a two-segment label" {
+@test "large files links each review label to its full path" {
     local review_home="$HOME/large-review-short-path"
     mkdir -p "$review_home/Library/Application Support/MobileSync/Backup/00008150-DEVICE" "$review_home/.gradle/caches"
 
@@ -3744,13 +3744,23 @@ run_with_timeout() {
     shift
     "$@"
 }
+# A terminal that renders links: the label carries the path, no path field.
+MOLE_ANSI_SUPPORTED_CACHE=0
+check_large_file_candidates
+echo "--- plain"
+MOLE_ANSI_SUPPORTED_CACHE=1
 check_large_file_candidates
 EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-    [[ "$output" == *"LINK<$review_home/Library/Application Support/MobileSync/Backup>TEXT<…/MobileSync/Backup>"* ]] || { echo "$output"; return 1; }
-    # A path that is already short keeps its full form.
-    [[ "$output" == *"TEXT<~/.gradle/caches>"* ]] || { echo "$output"; return 1; }
+    local linked plain
+    linked=$(printf '%s\n' "$output" | sed -n '1,/^--- plain/p')
+    plain=$(printf '%s\n' "$output" | sed -n '/^--- plain/,$p')
+    [[ "$linked" == *"LINK<$review_home/Library/Application Support/MobileSync/Backup>TEXT<iOS backups>"* ]] || { echo "$output"; return 1; }
+    [[ "$linked" == *"LINK<$review_home/.gradle/caches>TEXT<Gradle caches>"* ]] || { echo "$output"; return 1; }
+    [[ "$linked" != *"TEXT<>"* ]] || { echo "$output"; return 1; }
+    # Without links the path stays visible as the last field.
+    [[ "$plain" == *"Gradle caches"*"LINK<$review_home/.gradle/caches>TEXT<>"* ]] || { echo "$output"; return 1; }
 }
 
 @test "large files measures each row once, at most four at a time, and prints them in order" {
@@ -4018,7 +4028,9 @@ EOF
     local review_home="$HOME/large-review-dates"
     mkdir -p \
         "$review_home/Library/Application Support/MobileSync/Backup/00008150-DEVICE" \
-        "$review_home/Library/Developer/Xcode/Archives/2026-03-04" \
+        "$review_home/Library/Developer/Xcode/Archives/2025-11-20/App 11-20.xcarchive" \
+        "$review_home/Library/Developer/Xcode/Archives/2026-03-04/App 3-04.xcarchive" \
+        "$review_home/Library/Developer/Xcode/Archives/2026-03-04/App 3-04 2.xcarchive" \
         "$review_home/Library/Developer/Xcode/DerivedData/Some-project"
     touch -t 202601021200 "$review_home/Library/Application Support/MobileSync/Backup/00008150-DEVICE"
     touch -t 202603041200 "$review_home/Library/Developer/Xcode/Archives/2026-03-04"
@@ -4050,7 +4062,8 @@ EOF
         echo "$output"
         return 1
     }
-    [[ "$output" == *"Xcode archives"*"2026-03-04"* ]] || {
+    # Archives count their builds and give the month range from the folders.
+    [[ "$output" == *"Xcode archives"*"3 builds, Nov 2025 to Mar 2026"* ]] || {
         echo "$output"
         return 1
     }
@@ -4063,6 +4076,10 @@ EOF
         return 1
     }
     [[ "$derived_row" != *[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]* ]] || {
+        echo "$derived_row"
+        return 1
+    }
+    [[ "$derived_row" == *"1 project"* ]] || {
         echo "$derived_row"
         return 1
     }
@@ -4689,4 +4706,92 @@ EOF
     [[ "$output" == *"SECTION_BUDGET=[]"* ]] || return 1
     [[ "$output" == *"OVERCAP n=0"* ]] || return 1
     [[ "$output" == *"SYMLINK n=0"* ]] || return 1
+}
+
+@test "large files leaves out DerivedData that developer tools already covered" {
+    local review_home="$HOME/large-review-derived-covered"
+    mkdir -p "$review_home/Library/Developer/Xcode/DerivedData" \
+        "$review_home/Library/Developer/CoreSimulator/Devices"
+
+    run env HOME="$review_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+docker() { return 1; }
+defaults() { return 1; }
+get_path_size_kb() { printf '2097152\n'; }
+run_with_timeout() { shift; "$@"; }
+du() { printf '2097152 %s\n' "${2:-/tmp}"; }
+for covered in false true; do
+    _MOLE_DERIVED_DATA_COVERED=$covered
+    echo "PASS:$covered"
+    check_large_file_candidates
+done
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    local first second
+    first=$(printf '%s\n' "$output" | sed -n '/^PASS:false/,/^PASS:true/p')
+    second=$(printf '%s\n' "$output" | sed -n '/^PASS:true/,$p')
+    [[ "$first" == *"Xcode DerivedData"* ]] || { echo "$output"; return 1; }
+    [[ "$second" != *"Xcode DerivedData"* ]] || { echo "$output"; return 1; }
+    [[ "$second" == *"Simulator data"* ]] || { echo "$output"; return 1; }
+}
+
+@test "large files names what the simulator and pnpm rows hold" {
+    local review_home="$HOME/large-review-facts"
+    local devices="$review_home/Library/Developer/CoreSimulator/Devices"
+    mkdir -p "$devices/AAAA" "$devices/BBBB" "$devices/.cache" \
+        "$review_home/Library/pnpm/store/v10" "$review_home/Library/pnpm/store/v3" \
+        "$review_home/Library/pnpm/store/v11"
+    : > "$devices/AAAA/device.plist"
+    : > "$devices/BBBB/device.plist"
+
+    run env HOME="$review_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+docker() { return 1; }
+defaults() { return 1; }
+du() { printf '2097152 %s\n' "${2:-/tmp}"; }
+run_with_timeout() {
+    shift
+    "$@"
+}
+check_large_file_candidates
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    local plain
+    plain=$(printf '%s' "$output" | sed $'s/\033\\[[0-9;]*m//g')
+    [[ "$plain" == *"Simulator data · 2.15GB · 2 simulators"* ]] || { echo "$plain"; return 1; }
+    [[ "$plain" == *"pnpm store · 2.15GB · v3, v10 and v11 stores"* ]] || { echo "$plain"; return 1; }
+}
+
+@test "clean_trash preview shows loading while it measures and stops it before the row" {
+    rm -rf "$HOME/.Trash" # SAFE: reset this test's temporary HOME fixture before populating it
+    mkdir -p "$HOME/.Trash/old-folder"
+    printf 'data' > "$HOME/.Trash/old-folder/file"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+DRY_RUN=true
+spinning=false
+start_section_spinner() { spinning=true; echo "SPIN:$1"; }
+stop_section_spinner() { spinning=false; }
+note_activity() { :; }
+is_path_whitelisted() { return 1; }
+validate_path_for_deletion() { return 0; }
+clean_trash
+echo "SPINNING_AFTER=$spinning"
+EOF
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"SPIN:Measuring Trash..."*"Trash · would empty, 1 item"* ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"SPINNING_AFTER=false"* ]] || { echo "$output"; return 1; }
 }

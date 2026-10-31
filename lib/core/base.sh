@@ -113,11 +113,10 @@ readonly ICON_SOLID="●"
 readonly ICON_LIST="•"
 readonly ICON_SUBLIST="↳"
 readonly ICON_ARROW="➤"
-readonly ICON_DRY_RUN="→"
+readonly ICON_DRY_RUN="○"
 readonly ICON_REVIEW="⊙"
 readonly ICON_NAV_UP="↑"
 readonly ICON_NAV_DOWN="↓"
-readonly ICON_INFO="ℹ"
 
 # ============================================================================
 # LaunchServices Utility
@@ -1080,6 +1079,16 @@ bytes_to_human() {
 # Convert kilobytes to human-readable format
 # Args: $1 - size in KB
 # Returns: formatted string
+# "1 item", "3 items": a count with its noun, singular for exactly one.
+mole_count_label() {
+    local count="${1:-0}" noun="$2"
+    if [[ "$count" == "1" ]]; then
+        printf '%s %s' "$count" "$noun"
+    else
+        printf '%s %ss' "$count" "$noun"
+    fi
+}
+
 bytes_to_human_kb() {
     bytes_to_human "$((${1:-0} * 1024))"
 }
@@ -1202,6 +1211,45 @@ format_path_link() {
     # a single-quoted printf format ending in \\ trips ShellCheck SC1003.
     local st=$'\033\\'
     printf '\033]8;;file://%s%s%s\033]8;;%s' "$(percent_encode_path "$path")" "$st" "$display" "$st"
+}
+
+# One review row: "⊙ label · value · fact". On a terminal the label itself
+# links to the path, so the row needs no command or path field; plain output
+# has no links and keeps the path as the last field. path, value and fact
+# may each be empty.
+mole_review_row() {
+    local label="$1" path="${2:-}" value="${3:-}" fact="${4:-}"
+    local shown="$label" tail=""
+    if [[ -n "$path" ]]; then
+        # Settle the check here: inside $(...) stdout is a pipe.
+        if is_ansi_supported 2> /dev/null; then
+            shown=$(format_path_link "$path" "$label")
+        else
+            tail=" · $(format_path_link "$path")"
+        fi
+    fi
+    local line="  ${YELLOW}${ICON_REVIEW}${NC} ${shown}"
+    [[ -n "$value" ]] && line+=" · ${GREEN}${value}${NC}"
+    [[ -n "$fact" ]] && line+=" · ${GRAY}${fact}${NC}"
+    echo -e "${line}${tail}"
+}
+
+# "a", "a and b", "a, b and c", then "a, b, c and 2 more".
+mole_join_names() {
+    local count=$#
+    [[ $count -gt 0 ]] || return 0
+    if [[ $count -gt 4 ]]; then
+        printf '%s, %s, %s and %s more' "$1" "$2" "$3" "$((count - 3))"
+        return 0
+    fi
+    local out="$1"
+    shift
+    while [[ $# -gt 1 ]]; do
+        out+=", $1"
+        shift
+    done
+    [[ $# -eq 1 ]] && out+=" and $1"
+    printf '%s' "$out"
 }
 
 # ============================================================================
@@ -1718,7 +1766,7 @@ safe_clear_line() {
 }
 
 # Update progress spinner if enough time has elapsed
-# Usage: update_progress_if_needed <completed> <total> <last_update_time_var> [interval]
+# Usage: update_progress_if_needed <completed> <total> <last_update_time_var> [interval] [label]
 # Example: update_progress_if_needed "$completed" "$total" last_progress_update 2
 # Returns: 0 if updated, 1 if skipped
 update_progress_if_needed() {
@@ -1726,6 +1774,7 @@ update_progress_if_needed() {
     local total="$2"
     local last_update_var="$3" # Name of variable holding last update time
     local interval="${4:-2}"   # Default: update every 2 seconds
+    local label="${5:-}"       # What is being scanned, named in the spinner
 
     # Get current time. Callers tick once per item, so anchor $SECONDS to the
     # epoch once per shell instead of forking date on every call; the sum is
@@ -1745,7 +1794,11 @@ update_progress_if_needed() {
     if [[ $((current_time - last_time)) -ge $interval ]]; then
         # Update the spinner text in place; restarting it here blinked the
         # line on every progress tick.
-        start_section_spinner "Scanning items... $completed/$total"
+        if [[ -n "$label" ]]; then
+            start_section_spinner "Scanning ${label}, $completed/$total..."
+        else
+            start_section_spinner "Scanning items... $completed/$total"
+        fi
 
         # Update the last_update_time variable
         # eval: indirect write by name; bash 3.2 has no nameref
