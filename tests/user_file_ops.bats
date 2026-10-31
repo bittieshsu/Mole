@@ -270,6 +270,101 @@ EOF
     [[ "$output" == *"survived ps failure"* ]]
 }
 
+@test "Darwin temp root prune lists the root once a day and only after a complete pass" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/base.sh"
+
+darwin_root="$HOME/darwin-T-daily"
+rm -rf "$darwin_root"
+mkdir -p "$darwin_root"
+_mole_darwin_user_temp_dir() { printf '%s/\n' "$darwin_root"; }
+
+# A failed process listing proves nothing, so it must not stamp the day.
+ps() { return 1; }
+prune_stale_mole_tmpdir_leftovers "$darwin_root"
+unset -f ps
+[[ ! -e "$darwin_root/mole.prune-stamp" ]] || { echo "stamped after ps failure"; exit 1; }
+
+touch "$darwin_root/mole.Stale1"
+touch -t 202001010101 "$darwin_root/mole.Stale1"
+prune_stale_mole_tmpdir_leftovers "$darwin_root"
+[[ ! -e "$darwin_root/mole.Stale1" ]] || { echo "first pass kept a stale entry"; exit 1; }
+[[ -f "$darwin_root/mole.prune-stamp" ]] || { echo "no stamp after a complete pass"; exit 1; }
+
+# Within the day the root is not listed again.
+touch "$darwin_root/mole.Stale2"
+touch -t 202001010101 "$darwin_root/mole.Stale2"
+prune_stale_mole_tmpdir_leftovers "$darwin_root"
+[[ -e "$darwin_root/mole.Stale2" ]] || { echo "listed again within a day"; exit 1; }
+
+# A day-old stamp lets the next run list it.
+touch -t 202001010101 "$darwin_root/mole.prune-stamp"
+prune_stale_mole_tmpdir_leftovers "$darwin_root"
+[[ ! -e "$darwin_root/mole.Stale2" ]] || { echo "old stamp still skipped the pass"; exit 1; }
+echo "daily ok"
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"daily ok"* ]]
+}
+
+@test "Darwin temp root prune clears a backlog larger than one argument list" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/base.sh"
+
+darwin_root="$HOME/darwin-T-backlog"
+rm -rf "$darwin_root"
+mkdir -p "$darwin_root"
+_mole_darwin_user_temp_dir() { printf '%s/\n' "$darwin_root"; }
+
+# 80,000 names exceed ARG_MAX when passed as operands (the limit falls
+# between 50k and 70k on macOS), which once left the backlog untouched
+# while the pass still stamped the day.
+(cd "$darwin_root" && /usr/bin/seq -f 'mole.%06g' 100000 179999 |
+    /usr/bin/xargs /usr/bin/touch -t 202001010101)
+[[ "$(/bin/ls "$darwin_root" | /usr/bin/wc -l | tr -d ' ')" -eq 80000 ]] || { echo "fixture short"; exit 1; }
+prune_stale_mole_tmpdir_leftovers "$darwin_root"
+left=$(/usr/bin/find "$darwin_root" -mindepth 1 -maxdepth 1 -name 'mole.[0-9]*' | /usr/bin/wc -l | tr -d ' ')
+[[ "$left" -eq 0 ]] || { echo "left=$left"; exit 1; }
+[[ -f "$darwin_root/mole.prune-stamp" ]] || { echo "no stamp"; exit 1; }
+echo "backlog ok"
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"backlog ok"* ]]
+}
+
+@test "Darwin temp root prune removes nothing and leaves no stamp when the listing fails" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/base.sh"
+
+darwin_root="$HOME/darwin-T-listfail"
+rm -rf "$darwin_root"
+mkdir -p "$darwin_root"
+_mole_darwin_user_temp_dir() { printf '%s/\n' "$darwin_root"; }
+touch "$darwin_root/mole.Stale1"
+touch -t 202001010101 "$darwin_root/mole.Stale1"
+
+# The root listing fails partway: what it printed proves nothing.
+failing_find() {
+    printf 'O./mole.Stale1\n'
+    return 1
+}
+FIND_BSD=failing_find
+prune_stale_mole_tmpdir_leftovers "$darwin_root"
+FIND_BSD=/usr/bin/find
+[[ -e "$darwin_root/mole.Stale1" ]] || { echo "removed after a failed listing"; exit 1; }
+[[ ! -e "$darwin_root/mole.prune-stamp" ]] || { echo "stamped after a failed listing"; exit 1; }
+echo "listing ok"
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"listing ok"* ]]
+}
+
 @test "prepare_mole_tmpdir falls back to /tmp when TMPDIR and invoking home are unavailable" {
     result=$(env HOME="$HOME" TMPDIR="/var/empty" /bin/bash -c "
         source '$PROJECT_ROOT/lib/core/base.sh'

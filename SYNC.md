@@ -100,6 +100,13 @@ Previous delivery checks: `V1.62.0` (tag source `91a7bf44`) was verified on 2026
 
 Verification for the 2026-10-15 review fixes: `make build`, `go test ./...`, `./scripts/check.sh --no-format` and the full `TERM=xterm-256color MOLE_TEST_NO_AUTH=1 ./scripts/test.sh` passed. The full suite was repeated in an isolated checkout based on `81c12fd3` with the exact owned patch. These source changes shipped in V1.60.0.
 
+## 2026-10-31 Mole CLI (macOS) clean output and temp-root listing
+
+Source: Mole CLI (macOS) `main` (this entry's commits). `prune_stale_mole_tmpdir_leftovers` now lists the Darwin temp root once, as one tagged `find` whose names never return to a command line, and leaves `mole.prune-stamp` there after a complete pass so the next listing waits a day (`mo --version` 1.89s to 0.15s on a root of 126,196 entries). The candidate rules are unchanged. The clean output changes (owner-command rows count measured bytes, 0B rows hidden, review rows link their label and state one fact, two-line summary) are CLI presentation only.
+
+- Pending: Mole Mac's `TemporaryRootLeftoverPolicy` holds the same candidate contract (`.claude/rules/core.md`). Next check: whether its scan runs often enough on a large root to need the same once-a-day stamp, and if so, honor the CLI's `mole.prune-stamp` rather than writing its own, so one listing a day serves both. The stamp name matches neither candidate pattern, so the current Mole Mac policy leaves it alone.
+- Not applicable: the clean row wording and summary box; Mole Mac renders its own UI.
+
 ## 2026-10-31 Mole Mac safety follow-up
 
 Implemented in source (Mole CLI (macOS), `main` at `709efa56`), one commit each: `mo optimize` keeps Spotlight's own `EnabledPreferenceRules` switches and prunes only entries that look like a lowercase reverse-DNS bundle id (#1878, `ea7abfc9`); `clean_dev_ai_agents` removes a superseded Claude Code, cursor-agent or Copilot release only when the open-handle probe says no process holds it, and skips an open or unknown one by name (`fffa2ea3`); the uninstall summary in Trash mode states the size without calling it freed (`3bb0eae9`); `~/Library/Caches/llama.cpp`, where llama.cpp keeps `-hf` model downloads, is hard-safety whitelisted (`3b0f94df`); Mail attachment cleanup takes only a copy one folder deep that nobody wrote to since Mail made it, and asks again at the final sink (`709efa56`). Old-source runs of each new test fail; `scripts/check.sh --no-format` and the full `scripts/test.sh` suite pass. Not released.

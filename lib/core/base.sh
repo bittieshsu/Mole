@@ -1325,23 +1325,56 @@ prune_stale_mole_tmpdir_leftovers() {
     [[ "$uid" =~ ^[0-9]+$ ]] || return 0
 
     # Names stay relative to the root so no path is rebuilt from text. Each
-    # list holds one name per line: the token and digit-only globs leave no
+    # list holds one name per line: the token and digit-only patterns leave no
     # room for a crafted name to add a line. "/" is a pattern no name can
-    # equal, so an empty keep list still filters correctly.
+    # equal, so an empty keep list still filters correctly. Every pipeline ends
+    # in `|| true` because callers run under errexit and pipefail, where a
+    # grep that matches nothing would otherwise end the pass early.
     (
         cd "$resolved_root" 2> /dev/null || exit 0
-        local token_glob='mole.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]'
-        local registries live_registries keep registry_contents
 
-        registries=$(find . -mindepth 1 -maxdepth 1 -name 'mole.registry.[1-9]*' \
-            ! -name 'mole.registry.*[!0-9]*' -user "$uid" -type f -print 2> /dev/null |
-            sed 's#^\./mole\.registry\.##') || exit 0
-        live_registries=$(printf '%s\n' "$registries" |
-            grep -xF -f <(printf '%s\n' "$live_pids") 2> /dev/null) || live_registries=""
+        # What it takes is a day old, so one complete pass a day finds all of
+        # it. Listing this root is the cost: about half a second per listing
+        # on a long-lived Mac (126,196 entries on 2026-10-31), paid by every
+        # mo command before its first line, four listings per run before this.
+        local stamp="mole.prune-stamp"
+        if [[ -f "$stamp" && ! -L "$stamp" ]] &&
+            [[ -n "$(find "$stamp" -maxdepth 0 -mmin "-$max_age_minutes" -print 2> /dev/null)" ]]; then
+            exit 0
+        fi
+
+        # One listing of the root that also answers every attribute question,
+        # tagged per line: O an old one-link file, D an old empty folder, A any
+        # other regular file. Names never go back onto a command line, where
+        # tens of thousands of them exceed the argument limit. Any failure,
+        # including one exec batch, ends the pass with nothing removed and no
+        # stamp. The tag and "./" anchor every match, so a name holding a
+        # newline cannot turn its tail into an untagged candidate.
+        local listing
+        listing=$("$FIND_BSD" . -mindepth 1 -maxdepth 1 -name 'mole.*' -user "$uid" \( \
+            \( -type f -links 1 -mmin "+$max_age_minutes" -exec printf 'O%s\n' {} + \) -o \
+            \( -type f -exec printf 'A%s\n' {} + \) -o \
+            \( -type d -empty -mmin "+$max_age_minutes" -exec printf 'D%s\n' {} + \) \
+            \) 2> /dev/null) || exit 0
+
+        local old_files old_dirs registries old_registries
+        old_files=$(printf '%s\n' "$listing" |
+            sed -n -E 's#^O\./(mole\.[A-Za-z0-9]{6})$#\1#p') || exit 0
+        old_dirs=$(printf '%s\n' "$listing" |
+            sed -n -E 's#^D\./(mole\.[A-Za-z0-9]{6})$#\1#p') || exit 0
+        registries=$(printf '%s\n' "$listing" |
+            sed -n -E 's#^[OA]\./mole\.registry\.([1-9][0-9]*)$#\1#p') || exit 0
+        old_registries=$(printf '%s\n' "$listing" |
+            sed -n -E 's#^O\./mole\.registry\.([1-9][0-9]*)$#\1#p') || exit 0
+
+        local live_registries="" keep="/" registry_contents
+        if [[ -n "$registries" ]]; then
+            live_registries=$(printf '%s\n' "$registries" |
+                grep -xF -f <(printf '%s\n' "$live_pids") 2> /dev/null) || live_registries=""
+        fi
 
         # A Mole run that has been open for more than a day still owns the
         # entries its registry lists, however old they are.
-        keep="/"
         if [[ -n "$live_registries" ]]; then
             # A partial read cannot prove any old entry is unowned. Separate
             # read success from the valid case where filtering finds no names.
@@ -1351,23 +1384,23 @@ prune_stale_mole_tmpdir_leftovers() {
                 grep -xE 'mole\.[A-Za-z0-9]{6}' 2> /dev/null) || true
         fi
 
-        find . -mindepth 1 -maxdepth 1 -name "$token_glob" -user "$uid" \
-            -mmin "+$max_age_minutes" -type f -links 1 -print 2> /dev/null |
-            sed 's#^\./##' | grep -vxF -f <(printf '%s\n' "$keep") 2> /dev/null |
-            tr '\n' '\0' | xargs -0 rm -f -- 2> /dev/null # SAFE: unowned Mole temp names in the Darwin temp root only
-        # rmdir refuses a folder that gained content since the scan.
-        find . -mindepth 1 -maxdepth 1 -name "$token_glob" -user "$uid" \
-            -mmin "+$max_age_minutes" -type d -empty -print 2> /dev/null |
-            sed 's#^\./##' | grep -vxF -f <(printf '%s\n' "$keep") 2> /dev/null |
-            tr '\n' '\0' | xargs -0 rmdir -- 2> /dev/null
+        if [[ -n "$old_files" ]]; then
+            printf '%s\n' "$old_files" | grep -vxF -f <(printf '%s\n' "$keep") 2> /dev/null |
+                tr '\n' '\0' | xargs -0 rm -f -- 2> /dev/null || true # SAFE: unowned Mole temp names in the Darwin temp root only
+        fi
+        if [[ -n "$old_dirs" ]]; then
+            # rmdir refuses a folder that gained content since the scan.
+            printf '%s\n' "$old_dirs" | grep -vxF -f <(printf '%s\n' "$keep") 2> /dev/null |
+                tr '\n' '\0' | xargs -0 rmdir -- 2> /dev/null || true
+        fi
+        if [[ -n "$old_registries" ]]; then
+            printf '%s\n' "$old_registries" |
+                grep -vxF -f <(printf '%s\n' "$live_pids") 2> /dev/null |
+                sed 's#^#mole.registry.#' | tr '\n' '\0' |
+                xargs -0 rm -f -- 2> /dev/null || true # SAFE: dead-owner Mole registries in the Darwin temp root only
+        fi
 
-        find . -mindepth 1 -maxdepth 1 -name 'mole.registry.[1-9]*' \
-            ! -name 'mole.registry.*[!0-9]*' -user "$uid" \
-            -mmin "+$max_age_minutes" -type f -links 1 -print 2> /dev/null |
-            sed 's#^\./mole\.registry\.##' |
-            grep -vxF -f <(printf '%s\n' "$live_pids") 2> /dev/null |
-            sed 's#^#mole.registry.#' | tr '\n' '\0' |
-            xargs -0 rm -f -- 2> /dev/null # SAFE: dead-owner Mole registries in the Darwin temp root only
+        [[ -L "$stamp" ]] || touch "$stamp" 2> /dev/null || true
         exit 0
     ) || true
 }
