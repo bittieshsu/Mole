@@ -2052,8 +2052,13 @@ clean_browsers() {
     # Refusal reason for the Arc, Brave, Vivaldi, and QQ Browser process guards.
     local _MOLE_CLEAN_GUARD_REASON=""
     safe_clean ~/Library/Caches/com.apple.Safari/* "Safari cache"
-    # Chrome/Chromium.
-    safe_clean ~/Library/Caches/Google/Chrome/* "Chrome cache"
+    # Chrome/Chromium. The Caches root holds the live HTTP disk cache, so it
+    # waits for Chrome to quit like the Application Support leaves below; an
+    # empty or whitelisted root is not worth a deferral.
+    if mole_cleanup_targets_exist "$HOME/Library/Caches/Google/Chrome"/*; then
+        _user_safe_clean_process_guarded is_google_chrome_running "Chrome" "Chrome cache" \
+            ~/Library/Caches/Google/Chrome/* "Chrome cache" || true
+    fi
     # Do not clean Chromium Service Worker ScriptCache. Even when the browser is
     # closed, removing MV3 extension bytecode can break extension service
     # workers and trigger security warnings during dry-run scans. See #785,
@@ -2172,7 +2177,10 @@ clean_browsers() {
         done
     fi
     if [[ -d ~/Library/Application\ Support/BraveSoftware ]]; then
-        safe_clean ~/Library/Caches/BraveSoftware/Brave-Browser/* "Brave cache"
+        if mole_cleanup_targets_exist "$HOME/Library/Caches/BraveSoftware/Brave-Browser"/*; then
+            _user_safe_clean_process_guarded is_brave_browser_running "Brave" "Brave cache" \
+                ~/Library/Caches/BraveSoftware/Brave-Browser/* "Brave cache" || true
+        fi
         local _brave_profile
         if mole_clean_process_guard is_brave_browser_running "Brave started"; then
             safe_clean ~/Library/Application\ Support/BraveSoftware/Brave-Browser/*/Application\ Cache/* "Brave app cache"

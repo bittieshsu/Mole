@@ -2443,6 +2443,49 @@ EOF
     [[ "$output" != *"SAFE_CLEAN:Firefox profile cache"* ]]
 }
 
+# The ~/Library/Caches roots hold each browser's live HTTP disk cache, so
+# they wait for the browser to quit like the profile leaves do.
+@test "clean_browsers holds Chrome and Brave Caches roots while the browser runs" {
+    mkdir -p "$HOME/Library/Caches/Google/Chrome/Default/Cache" \
+        "$HOME/Library/Caches/BraveSoftware/Brave-Browser/Default/Cache" \
+        "$HOME/Library/Application Support/BraveSoftware/Brave-Browser"
+    touch "$HOME/Library/Caches/Google/Chrome/Default/Cache/data_0" \
+        "$HOME/Library/Caches/BraveSoftware/Brave-Browser/Default/Cache/data_0"
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+safe_clean() { echo "SAFE_CLEAN:${!#}"; }
+defer_cleanup_family() { echo "DEFER:$1"; }
+clean_service_worker_cache() { :; }
+note_activity() { :; }
+RUNNING=true
+pgrep() {
+    [[ "$RUNNING" == "true" ]] || return 1
+    [[ "$2" == *"Google Chrome"* || "$2" == *"Brave Browser"* ]]
+}
+clean_browsers
+echo "--- closed"
+RUNNING=false
+clean_browsers
+EOF
+    rm -rf "$HOME/Library/Caches/Google" "$HOME/Library/Caches/BraveSoftware" \
+        "$HOME/Library/Application Support/BraveSoftware"
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    local running closed
+    running="${output%%--- closed*}"
+    closed="${output#*--- closed}"
+    [[ "$running" != *"SAFE_CLEAN:Chrome cache"* ]] || { echo "$output"; return 1; }
+    [[ "$running" != *"SAFE_CLEAN:Brave cache"* ]] || { echo "$output"; return 1; }
+    [[ "$running" == *"DEFER:Chrome"* ]] || { echo "$output"; return 1; }
+    [[ "$running" == *"DEFER:Brave"* ]] || { echo "$output"; return 1; }
+    # Control: closed browsers still reach both rows.
+    [[ "$closed" == *"SAFE_CLEAN:Chrome cache"* ]] || { echo "$output"; return 1; }
+    [[ "$closed" == *"SAFE_CLEAN:Brave cache"* ]]
+}
+
 @test "clean_browsers fails closed when the Chrome process probe errors" {
     local chrome_support="$HOME/Library/Application Support/Google/Chrome"
     rm -rf "$chrome_support"
