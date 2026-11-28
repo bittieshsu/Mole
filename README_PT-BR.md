@@ -17,6 +17,8 @@
 </p>
 
 > 💡 Este repositório é a CLI gratuita e open source (`mo`). Prefere um app nativo? O [Mole for Mac](https://mole.fit/) é um download separado, com limpeza revisada antes de apagar, resíduos testados para mais de 900 apps, manutenção, análise detalhada do disco, status em tempo real e controle das ventoinhas em Macs compatíveis. No Windows, o app nativo é o [Mole for Windows](https://mole.fit/windows). `brew install mole` instala apenas a CLI.
+>
+> Black Friday: Mole for Mac e Mole for Windows estão com 20% de desconto até 30 de novembro, $15.20 em vez de $19, aplicado automaticamente no pagamento, sem cupom.
 
 ## Recursos
 
