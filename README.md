@@ -17,6 +17,8 @@
 </p>
 
 > 💡 This repo is the free open-source CLI (`mo`). Prefer a native app? [Mole for Mac](https://mole.fit/) is a separate download with review-before-delete cleanup, tested leftovers for 900+ apps, maintenance, disk drill-downs, live status, and fan controls on supported Macs. On Windows, the native app is [Mole for Windows](https://mole.fit/windows). `brew install mole` installs the CLI only.
+>
+> Black Friday: Mole for Mac and Mole for Windows are 20% off through November 30, $15.20 instead of $19, applied at checkout with no code.
 
 ## Features
 
