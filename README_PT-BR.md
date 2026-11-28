@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Resultados da limpeza do Mole" width="1000" />
 </p>
 
-> 💡 Este repositório é a CLI gratuita e open source (`mo`). Prefere um app nativo? O [Mole for Mac](https://mole.fit/) é um download separado, com limpeza revisada antes de apagar, resíduos testados para mais de 900 apps, manutenção, análise detalhada do disco, status em tempo real e controle das ventoinhas em Macs compatíveis. No Windows, o app nativo é o [Mole for Windows](https://mole.fit/windows). Na Black Friday, os dois apps estão com 20% de desconto até 30 de novembro. `brew install mole` instala apenas a CLI.
+> 💡 Este repositório é a CLI gratuita e open source (`mo`), e `brew install mole` instala apenas a CLI. Prefere um app nativo? O [Mole para Mac e Windows](https://mole.fit/pt-br) é baixado à parte, com 20% de desconto na Black Friday até 30 de novembro.
 
 ## Recursos
 

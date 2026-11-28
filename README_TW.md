@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Mole 清理成果" width="1000" />
 </p>
 
-> 💡 這個倉庫是免費開源的命令列工具（`mo`），喜歡圖形介面的話可以另外下載 [Mole for Mac](https://mole.fit/)，支援刪除前逐項確認、實測 900 多款軟體的解除安裝殘留、系統維護、逐層分析磁碟空間、即時狀態監控，以及在支援的 Mac 上控制風扇，Windows 上對應的原生 App 是 [Mole for Windows](https://mole.fit/tw/windows)，黑五兩個 App 都打 8 折到 11 月 30 日，`brew install mole` 只會安裝命令列工具。
+> 💡 這個倉庫是免費開源的命令列工具（`mo`），`brew install mole` 只會安裝它，想用圖形介面可以另外下載 [Mac 和 Windows 版 App](https://mole.fit/zh-hant)，黑五 8 折到 11 月 30 日。
 
 ## 功能
 
