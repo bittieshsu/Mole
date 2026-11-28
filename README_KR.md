@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Mole 정리 결과" width="1000" />
 </p>
 
-> 💡 이 저장소는 무료 오픈소스 CLI(`mo`)이며 `brew install mole`은 CLI만 설치합니다. 네이티브 앱은 [Mac과 Windows용](https://mole.fit/ko)으로 따로 받을 수 있고, 블랙 프라이데이에는 11월 30일까지 20% 할인됩니다.
+> 💡 이 저장소는 무료 오픈소스 CLI(`mo`)이며 `brew install mole`은 CLI만 설치합니다. 네이티브 앱은 [Mac과 Windows용](https://mole.fit/ko)으로 따로 받을 수 있고, 지금 블랙 프라이데이로 20% 할인 중입니다.
 
 ## 주요 기능
 
