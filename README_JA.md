@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Mole クリーンアップ結果" width="1000" />
 </p>
 
-> 💡 このリポジトリは無料のオープンソース CLI（`mo`）で、`brew install mole` でインストールされるのは CLI だけです。ネイティブアプリは [Mac 版と Windows 版](https://mole.fit/ja) を別途ダウンロードでき、現在ブラックフライデーで 20% オフです。
+> 💡 このリポジトリは無料のオープンソース CLI（`mo`）で、`brew install mole` でインストールされるのは CLI だけです。ネイティブアプリは [Mac 版と Windows 版](https://mole.fit/ja) を別途ダウンロードでき、機能が多くより使いやすく、現在ブラックフライデーで 20% オフです。
 
 ## 機能
 

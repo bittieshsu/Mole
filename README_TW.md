@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Mole 清理成果" width="1000" />
 </p>
 
-> 💡 這個倉庫是免費開源的命令列工具（`mo`），`brew install mole` 只會安裝它，想用圖形介面可以另外下載 [Mac 和 Windows 版 App](https://mole.fit/zh-hant)，現在黑五 8 折。
+> 💡 這個倉庫是免費開源的命令列工具（`mo`），`brew install mole` 只會安裝它，想用圖形介面可以另外下載 [Mac 和 Windows 版 App](https://mole.fit/zh-hant)，功能更多也更易用，現在黑五 8 折。
 
 ## 功能
 

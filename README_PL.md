@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Wyniki czyszczenia Mole" width="1000" />
 </p>
 
-> 💡 To repozytorium to darmowe CLI open source (`mo`), a `brew install mole` instaluje tylko CLI. Natywną [aplikację Mole na Maca i Windows](https://mole.fit/) pobierzesz osobno (teraz na Black Friday taniej o 20%).
+> 💡 To repozytorium to darmowe CLI open source (`mo`), a `brew install mole` instaluje tylko CLI. Natywną [aplikację Mole na Maca i Windows](https://mole.fit/), z większą liczbą funkcji i łatwiejszą w obsłudze, pobierzesz osobno (teraz na Black Friday taniej o 20%).
 
 ## Funkcje
 
