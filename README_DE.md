@@ -16,9 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Mole Bereinigungsergebnisse" width="1000" />
 </p>
 
-> 💡 Dieses Repository ist das kostenlose Open-Source-CLI (`mo`). Lieber eine native App? [Mole for Mac](https://mole.fit/) ist ein separater Download mit Prüfung vor dem Löschen, getesteter Restdateien-Entfernung für über 900 Apps, Wartung, Festplatten-Drill-down, Live-Status und Lüftersteuerung auf unterstützten Macs. Unter Windows ist [Mole for Windows](https://mole.fit/de/windows) die native App. `brew install mole` installiert nur das CLI.
->
-> Black Friday: Mole for Mac und Mole for Windows kosten bis zum 30. November 20 % weniger, $15.20 statt $19, automatisch an der Kasse und ohne Code.
+> 💡 Dieses Repository ist das kostenlose Open-Source-CLI (`mo`). Lieber eine native App? [Mole for Mac](https://mole.fit/) ist ein separater Download mit Prüfung vor dem Löschen, getesteter Restdateien-Entfernung für über 900 Apps, Wartung, Festplatten-Drill-down, Live-Status und Lüftersteuerung auf unterstützten Macs. Unter Windows ist [Mole for Windows](https://mole.fit/de/windows) die native App. Zum Black Friday sind beide Apps bis 30. November 20 % günstiger. `brew install mole` installiert nur das CLI.
 
 ## Funktionen
 

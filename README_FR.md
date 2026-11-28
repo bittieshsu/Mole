@@ -16,9 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Résultats du nettoyage avec Mole" width="1000" />
 </p>
 
-> 💡 Ce dépôt contient la CLI open source gratuite (`mo`). Vous préférez une app native ? [Mole for Mac](https://mole.fit/) se télécharge séparément : vérification avant suppression, nettoyage des résidus testé sur plus de 900 apps, maintenance, exploration détaillée du disque, état en direct et contrôle des ventilateurs sur les Mac compatibles. Sous Windows, l'app native est [Mole for Windows](https://mole.fit/fr/windows). `brew install mole` installe uniquement la CLI.
->
-> Black Friday : Mole for Mac et Mole for Windows sont à -20 % jusqu'au 30 novembre, $15.20 au lieu de $19, appliqué automatiquement au paiement, sans code.
+> 💡 Ce dépôt contient la CLI open source gratuite (`mo`). Vous préférez une app native ? [Mole for Mac](https://mole.fit/) se télécharge séparément : vérification avant suppression, nettoyage des résidus testé sur plus de 900 apps, maintenance, exploration détaillée du disque, état en direct et contrôle des ventilateurs sur les Mac compatibles. Sous Windows, l'app native est [Mole for Windows](https://mole.fit/fr/windows). Pour le Black Friday, les deux apps sont à -20 % jusqu'au 30 novembre. `brew install mole` installe uniquement la CLI.
 
 ## Fonctionnalités
 
