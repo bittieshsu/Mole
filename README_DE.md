@@ -16,7 +16,7 @@
   <img src="./docs/img/big-mole.png" alt="Mole Bereinigungsergebnisse" width="1000" />
 </p>
 
-> 💡 Dieses Repository ist das kostenlose Open-Source-CLI (`mo`), und `brew install mole` installiert nur das CLI. Lieber eine native App? [Mole für Mac und Windows](https://mole.fit/de) gibt es separat, zum Black Friday bis 30. November 20 % günstiger.
+> 💡 Dieses Repository ist das kostenlose Open-Source-CLI (`mo`), und `brew install mole` installiert nur das CLI. Die native [Mole-App für Mac und Windows](https://mole.fit/de) gibt es separat (zum Black Friday bis 30. November 20 % günstiger).
 
 ## Funktionen
 
